@@ -1,0 +1,15 @@
+{
+  "name": "@driftjs/cli",
+  "version": "0.1.0",
+  "bin": {
+    "drift": "build/index.js"
+  },
+  "scripts": {
+     "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@driftjs/core": "workspace:^",
+    "@driftjs/postgres": "workspace:^",
+    "commander": "^11.1.0"
+  }
+}

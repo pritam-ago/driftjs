@@ -1,0 +1,24 @@
+# Node modules
+node_modules/
+packages/core/node_modules/
+packages/cli/node_modules/
+packages/adapter-postgres/node_modules/
+
+# Build output
+packages/core/build/
+packages/cli/build/
+packages/adapter-postgres/build/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
