@@ -5,11 +5,16 @@
     "drift": "build/index.js"
   },
   "scripts": {
-     "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "dev": "nodemon --watch src --ext ts --exec \"pnpm run build && node build/index.js\""
   },
   "dependencies": {
     "@driftjs/core": "workspace:^",
     "@driftjs/postgres": "workspace:^",
     "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.10"
   }
 }

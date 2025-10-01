@@ -8,11 +8,14 @@
   "scripts": {
     "build": "pnpm -r run build",
     "dev": "pnpm -r run dev",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "cli": "pnpm --filter @driftjs/cli exec node build/index.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "concurrently": "^9.2.1",
     "eslint": "^8.57.0",
+    "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
