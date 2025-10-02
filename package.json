@@ -5,6 +5,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "bin":{
+    "drift": "packages/cli/build/index.js"
+  },
   "scripts": {
     "build": "pnpm -r run build",
     "dev": "pnpm -r run dev",
