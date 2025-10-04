@@ -11,6 +11,8 @@
   "dependencies": {
     "@driftjs/core": "workspace:^",
     "@driftjs/postgres": "workspace:^",
+    "@driftjs/mongodb": "workspace:^",
+    "@driftjs/mysql": "workspace:^",
     "commander": "^11.1.0"
   },
   "devDependencies": {

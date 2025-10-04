@@ -5,7 +5,7 @@
   "workspaces": [
     "packages/*"
   ],
-  "bin":{
+  "bin": {
     "drift": "packages/cli/build/index.js"
   },
   "scripts": {
@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "@types/pg": "^8.6.6",
     "concurrently": "^9.2.1",
     "eslint": "^8.57.0",
     "nodemon": "^3.1.10",

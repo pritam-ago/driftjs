@@ -11,6 +11,9 @@ importers:
       '@types/node':
         specifier: ^20.11.30
         version: 20.19.17
+      '@types/pg':
+        specifier: ^8.6.6
+        version: 8.15.5
       concurrently:
         specifier: ^9.2.1
         version: 9.2.1
@@ -27,6 +30,18 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/adapter-mongodb:
+    dependencies:
+      '@driftjs/core':
+        specifier: workspace:^
+        version: link:../core
+
+  packages/adapter-mysql:
+    dependencies:
+      '@driftjs/core':
+        specifier: workspace:^
+        version: link:../core
+
   packages/adapter-postgres:
     dependencies:
       '@driftjs/core':
@@ -36,6 +51,9 @@ importers:
         specifier: ^8.12.0
         version: 8.16.3
     devDependencies:
+      '@types/pg':
+        specifier: ^8.6.6
+        version: 8.15.5
       concurrently:
         specifier: ^9.2.1
         version: 9.2.1
@@ -48,6 +66,12 @@ importers:
       '@driftjs/core':
         specifier: workspace:^
         version: link:../core
+      '@driftjs/mongodb':
+        specifier: workspace:^
+        version: link:../adapter-mongodb
+      '@driftjs/mysql':
+        specifier: workspace:^
+        version: link:../adapter-mysql
       '@driftjs/postgres':
         specifier: workspace:^
         version: link:../adapter-postgres
@@ -144,6 +168,9 @@ packages:
 
   '@types/node@20.19.17':
     resolution: {integrity: sha512-gfehUI8N1z92kygssiuWvLiwcbOB3IRktR6hTDgJlXMYh5OvkPSRmgfoBUmfZt+vhwJtX7v1Yw4KvvAf7c5QKQ==}
+
+  '@types/pg@8.15.5':
+    resolution: {integrity: sha512-LF7lF6zWEKxuT3/OR8wAZGzkg4ENGXFNyiV/JeOt9z5B+0ZVwbql9McqX5c/WStFq1GaGso7H1AzP/qSzmlCKQ==}
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
@@ -816,6 +843,12 @@ snapshots:
   '@types/node@20.19.17':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/pg@8.15.5':
+    dependencies:
+      '@types/node': 20.19.17
+      pg-protocol: 1.10.3
+      pg-types: 2.2.0
 
   '@ungap/structured-clone@1.3.0': {}
 
