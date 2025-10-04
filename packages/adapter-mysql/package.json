@@ -1,0 +1,12 @@
+{
+  "name": "@driftjs/mysql",
+  "version": "0.1.0",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@driftjs/core": "workspace:^"
+  }
+}
