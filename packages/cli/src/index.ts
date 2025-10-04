@@ -15,6 +15,7 @@ program
   .command("capture")
   .description("Capture deltas from a database")
   .requiredOption("--db <connection>", "Database connection string")
+  .option("--out <file>", "Write snapshot JSON to file instead of stdout")
   .action(capture);
 
 program
