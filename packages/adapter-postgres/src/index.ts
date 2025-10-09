@@ -20,6 +20,13 @@ export function PostgresAdapter(connectionString: string): DriftAdapter {
   return { startCapture };
 }
 
+function randomString(len = 8) {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
 export async function captureSnapshot(connectionString: string): Promise<Record<string, unknown>> {
   const client = new Client({ connectionString });
   await client.connect();
@@ -87,7 +94,7 @@ export async function captureSnapshot(connectionString: string): Promise<Record<
 
     const snapshot = {
       metadata: {
-        snapshot_id: new Date().toISOString(),
+        snapshot_id: `${new Date().toISOString()}-${randomString(8)}`,
         db_name: dbName,
         db_type: "postgres",
         version: "1.0",

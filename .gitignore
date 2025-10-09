@@ -8,6 +8,8 @@ packages/adapter-postgres/node_modules/
 packages/core/build/
 packages/cli/build/
 packages/adapter-postgres/build/
+packages/adapter-mysql/build/
+packages/adapter-mongodb/build/
 
 # Logs
 *.log
