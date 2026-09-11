@@ -212,6 +212,12 @@ Worth reading before you point it at anything you care about.
 * **Foreign keys are respected.** Tables are sorted by their foreign keys, so inserts run
   parents-first and deletes children-first. A cycle between two tables fails loudly and
   names them rather than guessing an order.
+* **A table that references itself has its rows sorted too.** In a `categories.parent_id`
+  tree the rows are ranked by depth, so a parent is inserted before its children and
+  deleted after them. A row whose parent is itself is fine — Postgres checks the constraint
+  at the end of the statement. Two rows that point at each other are not: no insert order
+  satisfies a foreign key that is not `DEFERRABLE`, so restore names those rows and stops
+  while planning, before it has touched the database.
 * **Sequences are resynced.** Rows are inserted with their original primary keys, which
   leaves every `serial` and identity sequence behind. Restore runs `setval` on each one it
   touched, so the next insert that omits the column does not collide.
@@ -312,6 +318,47 @@ These are the behaviours worth knowing before you trust a diff:
   included, and `key` is `null` on those deltas.
 * **Only the `public` schema is captured.**
 * **A table that disappears between snapshots** yields a `DELETE` for each of its rows.
+
+---
+
+## Limitations
+
+Restore has its own list under [How restore behaves](#how-restore-behaves). These are the
+limits of the tool as a whole, and they are the ones worth knowing before it goes anywhere
+near a database that matters.
+
+* **Whole tables are held in memory.** Capture runs `SELECT *` per table, keeps every row
+  as a JavaScript object and writes the lot as one JSON document; diff and restore read
+  whole snapshots back the same way. Nothing streams, nothing is batched, and a restore
+  builds one statement per changed row and holds them all before it opens its transaction.
+  That is the right trade for a development database of a few thousand rows and the wrong
+  one for a table of millions, where the Node heap is what will stop you.
+* **Only the `public` schema.** Tables in any other schema are not captured, not diffed and
+  not restored, and nothing warns you: point drift at a database that keeps its tables
+  elsewhere and it will report a clean, empty snapshot.
+* **Capture and apply are not one atomic unit.** `restoreSnapshot` captures the current
+  state on one connection and applies its statements on another, so a write that lands
+  between the two is not accounted for — the plan was built against a database that has
+  since moved, and the apply will overwrite that write without noticing it. The fix is
+  known rather than vague: `captureSnapshot` takes a connection string, so the capture
+  cannot join anyone else's transaction. Give it an open client instead, and run the
+  capture and the apply in one transaction at `REPEATABLE READ`, and both halves see a
+  single frozen view of the database. It is a signature change on the most-used function
+  in the codebase, which is why it has not happened yet. Until it does: restore into a
+  database nothing else is writing to.
+* **Partitioned tables are captured through their parent; table inheritance is not
+  handled at all.** A partitioned parent is captured once and its partitions are skipped,
+  because `SELECT *` on the parent already returns their rows. Restore inserts through the
+  parent and Postgres routes each row to the partition it belongs in. Legacy `INHERITS`
+  children are a different thing — they are tables in their own right, so the parent and
+  the child are both captured and the parent's rows already include the child's, which
+  means those rows are stored, and restored, twice. A snapshot written by a build older
+  than this one lists partitions as separate tables; recapture it rather than restoring it.
+* **Triggers fire during a restore.** Inserts, updates and deletes run as ordinary
+  statements, so application triggers fire, audit tables fill up, and a cascading foreign
+  key acts on rows the plan never names. Disabling them needs table ownership, and doing
+  it silently would be a worse surprise than the writes themselves, so drift leaves them
+  alone.
 
 ---
 
