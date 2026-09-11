@@ -4,7 +4,7 @@
 shows you which rows moved, and puts them back.**
 
 [![CI](https://github.com/pritam-ago/driftjs/actions/workflows/ci.yml/badge.svg)](https://github.com/pritam-ago/driftjs/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/driftjs)](https://www.npmjs.com/package/driftjs)
+[![npm](https://img.shields.io/npm/v/%40driftcli%2Fdrift)](https://www.npmjs.com/package/@driftcli/drift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -12,7 +12,7 @@ shows you which rows moved, and puts them back.**
 ## Install
 
 ```bash
-npm i -g driftjs
+npm i -g @driftcli/drift
 ```
 
 Node 18 or newer, and a Postgres database you can reach. No server-side setup: drift uses

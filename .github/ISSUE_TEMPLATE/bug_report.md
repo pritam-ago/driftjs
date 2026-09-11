@@ -9,7 +9,7 @@ assignees: ''
 **Postgres version**
 <!-- SELECT version(); -->
 
-**driftjs version**
+**drift version**
 <!-- drift --version -->
 
 **Schema shape**

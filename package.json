@@ -1,5 +1,5 @@
 {
-  "name": "driftjs",
+  "name": "@driftcli/drift",
   "version": "0.1.0",
   "description": "Snapshot a Postgres database and diff two snapshots at the row level",
   "license": "MIT",
@@ -37,6 +37,9 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
