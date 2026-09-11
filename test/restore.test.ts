@@ -143,6 +143,76 @@ describe("restore against a real Postgres", () => {
     expect(await scalar<number>(`INSERT INTO t (v) VALUES ('c') RETURNING id`)).toBe(3);
   });
 
+  it("restores a four-level tree through a self-referencing foreign key", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (
+         id        int PRIMARY KEY,
+         parent_id int REFERENCES categories(id),
+         name      text
+       )`,
+      // Inserted deepest-first, so the snapshot's row order is the wrong one and
+      // replaying it unsorted would violate the foreign key on the first row.
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, NULL, 'root')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (2, 1, 'child')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (3, 2, 'grandchild')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (4, 3, 'great-grandchild')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (5, 1, 'second root child')`,
+    );
+    const full = await capture();
+
+    await sql(`DELETE FROM categories`);
+    const empty = await capture();
+
+    // Postgres is the assertion: a child inserted before its parent raises a
+    // foreign key violation and the transaction never commits.
+    await restoreSnapshot(DATABASE_URL, full);
+    expect(await scalar<string>("SELECT count(*) FROM categories")).toBe("5");
+    expect(diff(full, await capture())).toEqual([]);
+
+    // And back to empty, which is the delete direction: a parent deleted before
+    // its children violates the same constraint.
+    await restoreSnapshot(DATABASE_URL, empty);
+    expect(await scalar<string>("SELECT count(*) FROM categories")).toBe("0");
+  });
+
+  it("restores a row whose parent is itself", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (id int PRIMARY KEY, parent_id int REFERENCES categories(id), name text)`,
+      // Legal: a foreign key is checked at the end of the statement, not per row.
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, 1, 'its own parent')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (2, 1, 'child')`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM categories`);
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+  });
+
+  it("refuses two rows that reference each other, before touching the database", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (id int PRIMARY KEY, parent_id int REFERENCES categories(id), name text)`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, NULL, 'a'), (2, 1, 'b')`,
+      // Only reachable by updating afterwards: no insert order satisfies a
+      // foreign key that is not DEFERRABLE.
+      `UPDATE categories SET parent_id = 2 WHERE id = 1`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM categories`);
+    const beforeRestore = await capture();
+
+    await expect(restoreSnapshot(DATABASE_URL, target)).rejects.toThrow(
+      /rows in "categories" reference each other through "parent_id" \(id=1, id=2\)/,
+    );
+
+    // It failed while planning, so not one statement ran.
+    expect(canonicalTables(await capture())).toBe(canonicalTables(beforeRestore));
+  });
+
   it("rolls the whole restore back when one statement fails", async () => {
     const target = await capture();
 

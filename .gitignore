@@ -20,3 +20,6 @@ snapshot.json
 *.snapshot.json
 
 /snapshots/
+
+# npm pack output
+*.tgz
