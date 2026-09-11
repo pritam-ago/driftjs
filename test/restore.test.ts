@@ -213,6 +213,63 @@ describe("restore against a real Postgres", () => {
     expect(canonicalTables(await capture())).toBe(canonicalTables(beforeRestore));
   });
 
+  it("restores a partitioned table through its parent, rows landing in the right partitions", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE events (id int, at date NOT NULL, label text, PRIMARY KEY (id, at))
+         PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO events VALUES (1, '2024-03-01', 'a'), (2, '2024-07-01', 'b'),
+                                 (3, '2025-02-01', 'c'), (4, '2025-09-01', 'd')`,
+    );
+    const target = await capture();
+
+    await sql(
+      `DELETE FROM events WHERE id = 1`,
+      `UPDATE events SET label = 'wrong' WHERE id = 3`,
+      `INSERT INTO events VALUES (9, '2025-11-11', 'not in the snapshot')`,
+    );
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+    // Four rows in total, and each one back in the partition it belongs to -
+    // restore only ever named the parent, and Postgres did the routing.
+    expect(await scalar<string>("SELECT count(*) FROM events")).toBe("4");
+    expect(await scalar<string>("SELECT count(*) FROM events_2024")).toBe("2");
+    expect(await scalar<string>("SELECT count(*) FROM events_2025")).toBe("2");
+  });
+
+  it("orders a partitioned table against the tables it references", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE tenants (id int PRIMARY KEY, name text)`,
+      `CREATE TABLE events (
+         id        int,
+         tenant_id int NOT NULL REFERENCES tenants(id),
+         at        date NOT NULL,
+         PRIMARY KEY (id, at)
+       ) PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO tenants VALUES (1, 'acme'), (2, 'globex')`,
+      `INSERT INTO events VALUES (1, 1, '2024-03-01'), (2, 2, '2025-02-01')`,
+    );
+    const full = await capture();
+
+    await sql(`DELETE FROM events`, `DELETE FROM tenants`);
+    const empty = await capture();
+
+    // The foreign key is the assertion in both directions: an event inserted
+    // before its tenant, or a tenant deleted before its events, rolls back.
+    await restoreSnapshot(DATABASE_URL, full);
+    expect(diff(full, await capture())).toEqual([]);
+
+    await restoreSnapshot(DATABASE_URL, empty);
+    expect(await scalar<string>("SELECT count(*) FROM events")).toBe("0");
+  });
+
   it("rolls the whole restore back when one statement fails", async () => {
     const target = await capture();
 

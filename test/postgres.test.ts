@@ -332,6 +332,69 @@ describe("capture + diff against a real Postgres", () => {
     ]);
   });
 
+  it("captures a partitioned table once, through its parent", async () => {
+    // pg_tables would list events, events_2024 and events_2025, and SELECT * on
+    // events already returns everything the two partitions hold - so all four
+    // rows would be stored twice.
+    await sql(
+      `CREATE TABLE events (id int, at date NOT NULL, label text, PRIMARY KEY (id, at))
+         PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO events VALUES (1, '2024-03-01', 'a'), (2, '2024-07-01', 'b'),
+                                 (3, '2025-02-01', 'c'), (4, '2025-09-01', 'd')`,
+    );
+
+    const snapshot = await capture();
+
+    expect(Object.keys(snapshot.tables)).toEqual(["events"]);
+    expect(snapshot.metadata.row_count).toEqual({ events: 4 });
+    expect(snapshot.tables.events!.rows.map((row) => row.label).sort()).toEqual(["a", "b", "c", "d"]);
+    // The parent carries the primary key, so its rows still have identity.
+    expect(snapshot.tables.events!.primary_key.sort()).toEqual(["at", "id"]);
+  });
+
+  it("diffs a change inside a partition as one update on the parent", async () => {
+    await sql(
+      `CREATE TABLE events (id int, at date NOT NULL, label text, PRIMARY KEY (id, at))
+         PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO events VALUES (1, '2024-03-01', 'a'), (2, '2025-02-01', 'c')`,
+    );
+    const base = await capture();
+
+    await sql(`UPDATE events SET label = 'changed' WHERE id = 2`);
+
+    // One delta, named for the parent. Capturing the partitions too would report
+    // the same change twice, once under events and once under events_2025.
+    expect(diff(base, await capture())).toEqual([
+      {
+        table: "events",
+        op: "UPDATE",
+        key: { id: 2, at: "2025-02-01" },
+        before: { label: "c" },
+        after: { label: "changed" },
+      },
+    ]);
+  });
+
+  it("still captures a plain table that merely looks like a partition", async () => {
+    // Table inheritance is not partitioning: an INHERITS child is a table in its
+    // own right, relispartition is false, and both sides are captured. The
+    // parent's SELECT * does return the child's rows, so this shape is still
+    // double-counted - see the README's limitations.
+    await sql(
+      `CREATE TABLE base_t (id int PRIMARY KEY, label text)`,
+      `CREATE TABLE child_t () INHERITS (base_t)`,
+      `INSERT INTO child_t VALUES (1, 'from the child')`,
+    );
+
+    const snapshot = await capture();
+
+    expect(Object.keys(snapshot.tables).sort()).toEqual(["base_t", "child_t"]);
+  });
+
   it("reports deletes for a table dropped between snapshots", async () => {
     await sql(`CREATE TABLE temporary (id int PRIMARY KEY)`, `INSERT INTO temporary VALUES (1)`);
     const base = await capture();
