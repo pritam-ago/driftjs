@@ -1,5 +1,5 @@
 import { Client } from "pg";
-import { Snapshot } from "@driftjs/core";
+import { Snapshot } from "../types";
 
 function randomString(len = 8) {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

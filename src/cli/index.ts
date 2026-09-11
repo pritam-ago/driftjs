@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { capture } from "./commands/capture";
+import { capture } from "./capture";
 
 const program = new Command();
 

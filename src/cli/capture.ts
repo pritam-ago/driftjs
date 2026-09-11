@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { captureSnapshot } from "@driftjs/postgres";
+import { captureSnapshot } from "../postgres/snapshot";
 
 export async function capture(opts: {
   db: string;
