@@ -2,7 +2,7 @@
 
 **drift snapshots a Postgres database, diffs two snapshots at the row level, and restores a snapshot back into the database.**
 
-Snapshot and diff work today. Restore does not exist yet — see [v2](#v2--not-built).
+All three work today.
 
 ---
 
@@ -13,6 +13,10 @@ writes a single JSON file: column types, primary key, and all rows.
 
 `drift diff` compares two of those files and prints the row-level changes between them —
 inserts, updates and deletes — as a flat list of deltas.
+
+`drift restore` carries a database back to the state a snapshot describes. It is the same
+engine pointed the other way: capture the current state, diff it against the target, and
+apply the resulting deltas in one transaction.
 
 That is the whole product. It is a plain `SELECT`-based snapshotter, not a change data
 capture system: it reads the current state of the database when you run it, and it needs
@@ -71,6 +75,70 @@ drift capture --db postgres://... --delta --base base.json
 ```
 
 `--delta` requires `--base`.
+
+### Restore a snapshot
+
+```bash
+drift restore base.json --db postgres://user:pass@localhost:5432/mydb
+```
+
+`--dry-run` prints the SQL it would run and executes nothing:
+
+```bash
+drift restore base.json --db postgres://... --dry-run
+```
+
+```sql
+BEGIN;
+
+-- deletes: children before parents
+DELETE FROM "public"."books" WHERE "id" = 4;
+
+-- updates
+UPDATE "public"."authors" SET "name" = 'Ursula Le Guin' WHERE "id" = 1;
+
+-- inserts: parents before children
+INSERT INTO "public"."books" ("id", "author_id", "title") VALUES (1, 1, 'The Dispossessed');
+INSERT INTO "public"."chapters" ("book_id", "chapter_no", "heading") VALUES (1, 1, 'Shevek');
+
+-- sequence resync, so the next generated key does not collide
+SELECT setval('public.authors_id_seq', COALESCE(MAX("id"), 1), MAX("id") IS NOT NULL) FROM "public"."authors";
+
+COMMIT;
+```
+
+Values are shown as literals there so the output is readable and runnable. A real restore
+sends them to Postgres as bind parameters; nothing is ever concatenated into SQL.
+
+---
+
+## How restore behaves
+
+Worth reading before you point it at anything you care about.
+
+* **All or nothing.** Every statement runs in one transaction. If any of them fails, the
+  whole restore rolls back and the database is left exactly as it was.
+* **Data only, never schema.** Restore does not create, drop or alter tables, and it does
+  not restore indexes, constraints, views or permissions. If the snapshot names a table
+  the database does not have, it fails before doing anything.
+* **Foreign keys are respected.** Tables are sorted by their foreign keys, so inserts run
+  parents-first and deletes children-first. A cycle between two tables fails loudly and
+  names them rather than guessing an order.
+* **Sequences are resynced.** Rows are inserted with their original primary keys, which
+  leaves every `serial` and identity sequence behind. Restore runs `setval` on each one it
+  touched, so the next insert that omits the column does not collide.
+* **Tables with no primary key are emptied and rewritten in full.** Their rows have no
+  identity, so there is no way to address one for an update or a delete. The rewrite lands
+  on exactly the right contents, duplicates included, and happens in the same transaction.
+  Restore says which tables it did this to.
+* **Triggers stay enabled.** Restoring data fires whatever application triggers the tables
+  carry. Disabling them needs table ownership, and doing it silently would be a worse
+  surprise than the writes themselves.
+* **The read and the write are not one atomic unit.** Restore captures the current state
+  on one connection and applies on another, so a concurrent writer in between is not
+  protected against. Restore into a database nothing else is writing to.
+* **An update that repoints a foreign key at a row inserted later in the same restore will
+  fail.** Updates run before inserts. Postgres reports it and the transaction rolls back.
 
 ---
 
@@ -178,8 +246,13 @@ point somewhere else; it defaults to
 
 None of the following exists. There is no code for any of it in this repository.
 
-* `drift restore` — write a snapshot back into a database.
 * Change data capture via logical replication / the write-ahead log.
+* Deferring constraints during a restore, via `SET CONSTRAINTS ALL DEFERRED`, to carry
+  foreign key cycles. It only works on `DEFERRABLE` constraints, which is not the default,
+  so it would quietly fail to help on most schemas.
+* Targeting individual rows in unkeyed tables by `ctid` instead of rewriting the whole
+  table.
+* Human-readable diff output. Deltas are JSON today.
 * Time-travel queries.
 * MySQL and MongoDB support.
 * A web dashboard.
