@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DATABASE_URL, resetSchema, sql } from "./helpers";
+import { DATABASE_URL, resetSchema, scalar, seed, sql } from "./helpers";
 
 const CLI = path.resolve(__dirname, "..", "dist", "cli.js");
 
@@ -118,5 +118,64 @@ describe("drift CLI", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("is not valid JSON");
+  });
+});
+
+describe("drift restore", () => {
+  beforeEach(seed);
+
+  it("prints readable SQL for --dry-run and executes nothing", async () => {
+    drift("capture", "--db", DATABASE_URL, "--out", file("target.json"));
+    // One of each, so every section of the rendered plan is exercised.
+    await sql(
+      `UPDATE authors SET name = 'Mutated' WHERE id = 1`,
+      `DELETE FROM chapters WHERE book_id = 1 AND chapter_no = 2`,
+      `INSERT INTO books (author_id, title) VALUES (1, 'Spurious')`,
+    );
+
+    const result = drift("restore", file("target.json"), "--db", DATABASE_URL, "--dry-run");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("BEGIN;");
+    expect(result.stdout).toContain("COMMIT;");
+    expect(result.stdout).toContain("-- deletes: children before parents");
+    expect(result.stdout).toContain("-- updates");
+    expect(result.stdout).toContain("-- inserts: parents before children");
+    expect(result.stdout).toContain('UPDATE "public"."authors"');
+    expect(result.stdout).toContain('INSERT INTO "public"."chapters"');
+    // Literals, not $1 placeholders.
+    expect(result.stdout).not.toMatch(/\$\d/);
+    // Nothing ran: the mutated row is still mutated.
+    expect(await scalar<string>(`SELECT name FROM authors WHERE id = 1`)).toBe("Mutated");
+  });
+
+  it("restores, after which capture and diff agree with the snapshot", async () => {
+    drift("capture", "--db", DATABASE_URL, "--out", file("target.json"));
+    await sql(`DELETE FROM chapters`, `DELETE FROM books`, `UPDATE authors SET name = 'Mutated'`);
+
+    const restore = drift("restore", file("target.json"), "--db", DATABASE_URL);
+    expect(restore.status).toBe(0);
+    expect(restore.stderr).toContain("restored");
+
+    drift("capture", "--db", DATABASE_URL, "--out", file("after.json"));
+    const result = drift("diff", file("target.json"), file("after.json"));
+
+    expect(JSON.parse(result.stdout)).toEqual([]);
+  });
+
+  it("says so when the database already matches", () => {
+    drift("capture", "--db", DATABASE_URL, "--out", file("target.json"));
+
+    const result = drift("restore", file("target.json"), "--db", DATABASE_URL);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("already matches");
+  });
+
+  it("fails with a readable message when the snapshot file is missing", () => {
+    const result = drift("restore", file("nope.json"), "--db", DATABASE_URL);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("cannot read snapshot file");
   });
 });

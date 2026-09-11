@@ -1,5 +1,8 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Client } from "pg";
 import { captureSnapshot } from "../src/postgres/snapshot";
+import { canonical } from "../src/diff/canonical";
 import type { Snapshot } from "../src/types";
 
 export const DATABASE_URL =
@@ -43,5 +46,49 @@ export async function withTimeZone<T>(tz: string, body: () => Promise<T>): Promi
   } finally {
     if (original === undefined) delete process.env.TZ;
     else process.env.TZ = original;
+  }
+}
+
+/** Rebuild the public schema and load examples/seed.sql into it. */
+export async function seed(): Promise<void> {
+  await resetSchema();
+  const file = path.join(__dirname, "..", "examples", "seed.sql");
+  // The fixture is saved with a BOM, which Postgres will not accept as SQL.
+  await sql(fs.readFileSync(file, "utf8").replace(/^﻿/, ""));
+}
+
+/**
+ * A snapshot's data as one deterministic string.
+ *
+ * captureSnapshot's SELECT has no ORDER BY, so a restore that deletes and
+ * reinserts rows can hand them back in a different order than it found them.
+ * Sorting rows canonically first makes a byte comparison mean "the same data"
+ * rather than "the same heap layout".
+ */
+export function canonicalTables(snapshot: Snapshot): string {
+  return JSON.stringify(
+    Object.keys(snapshot.tables)
+      .sort()
+      .map((name) => {
+        const table = snapshot.tables[name]!;
+        return {
+          name,
+          columns: table.columns,
+          primary_key: table.primary_key,
+          rows: table.rows.map(canonical).sort(),
+        };
+      }),
+  );
+}
+
+/** One scalar out of the database, for assertions that bypass snapshots. */
+export async function scalar<T>(query: string): Promise<T> {
+  const client = new Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const result = await client.query(query);
+    return Object.values(result.rows[0] as Record<string, unknown>)[0] as T;
+  } finally {
+    await client.end();
   }
 }

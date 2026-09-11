@@ -1,0 +1,218 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { diff } from "../src/diff/diff";
+import { restoreSnapshot } from "../src/postgres/restore";
+import { DATABASE_URL, canonicalTables, capture, resetSchema, scalar, seed, sql } from "./helpers";
+
+/** Everything the seed fixture holds, wiped without tripping a foreign key. */
+const WIPE = [
+  "DELETE FROM chapters",
+  "DELETE FROM books",
+  "DELETE FROM authors",
+  "DELETE FROM audit_log",
+];
+
+describe("restore against a real Postgres", () => {
+  beforeEach(seed);
+
+  it("restores into an emptied database", async () => {
+    const target = await capture();
+    await sql(...WIPE);
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+  });
+
+  it("restores over a database with rows added, changed and deleted", async () => {
+    const target = await capture();
+
+    await sql(
+      `UPDATE authors SET name = 'Wrong', royalties = 0.01 WHERE id = 1`,
+      `DELETE FROM chapters WHERE book_id = 1 AND chapter_no = 2`,
+      `INSERT INTO books (author_id, title, published) VALUES (2, 'Not In The Snapshot', '2020-01-01')`,
+    );
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+  });
+
+  it("inserts the three-level chain parent-first and deletes it child-first", async () => {
+    // Both directions are proved by Postgres itself: the wrong order raises a
+    // foreign key violation and the transaction never commits.
+    const full = await capture();
+    await sql(...WIPE);
+    const empty = await capture();
+
+    // Empty to full: every insert has to follow the parent it references.
+    await restoreSnapshot(DATABASE_URL, full);
+    expect(await scalar<string>("SELECT count(*) FROM chapters")).toBe("3");
+    expect(diff(full, await capture())).toEqual([]);
+
+    // Full to empty: every delete has to precede its parent's.
+    await restoreSnapshot(DATABASE_URL, empty);
+    expect(await scalar<string>("SELECT count(*) FROM books")).toBe("0");
+    expect(await scalar<string>("SELECT count(*) FROM authors")).toBe("0");
+    expect(diff(empty, await capture())).toEqual([]);
+  });
+
+  it("restores rows keyed by a composite primary key", async () => {
+    const target = await capture();
+
+    await sql(
+      `UPDATE chapters SET heading = 'Wrong' WHERE book_id = 1 AND chapter_no = 1`,
+      `DELETE FROM chapters WHERE book_id = 3 AND chapter_no = 1`,
+      `INSERT INTO chapters (book_id, chapter_no, heading) VALUES (2, 9, 'Spurious')`,
+    );
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+    expect(await scalar<string>(`SELECT heading FROM chapters WHERE book_id=1 AND chapter_no=1`)).toBe(
+      "Shevek",
+    );
+  });
+
+  it("rewrites an unkeyed table exactly, duplicates included", async () => {
+    const target = await capture();
+    expect(await scalar<string>("SELECT count(*) FROM audit_log")).toBe("2");
+
+    await sql(`DELETE FROM audit_log WHERE ctid IN (SELECT ctid FROM audit_log LIMIT 1)`);
+
+    const result = await restoreSnapshot(DATABASE_URL, target);
+
+    expect(result.plan.rewrittenTables).toEqual(["audit_log"]);
+    // Both identical rows are back, not one and not three.
+    expect(await scalar<string>("SELECT count(*) FROM audit_log")).toBe("2");
+    expect(diff(target, await capture())).toEqual([]);
+  });
+
+  it("resyncs sequences so the next insert does not collide", async () => {
+    const target = await capture();
+    await sql(...WIPE);
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    // authors holds ids 1 and 2, all written explicitly, so without a resync
+    // the sequence would still be at 1 and this would raise a unique violation.
+    const id = await scalar<number>(`INSERT INTO authors (name) VALUES ('Next') RETURNING id`);
+    expect(id).toBe(3);
+  });
+
+  it("leaves a sequence usable when the table is restored empty", async () => {
+    await sql(...WIPE);
+    const emptyTarget = await capture();
+
+    await sql(`INSERT INTO authors (name) VALUES ('Temporary')`);
+    await restoreSnapshot(DATABASE_URL, emptyTarget);
+
+    // No rows, so is_called is false and the sequence starts over at 1.
+    const id = await scalar<number>(`INSERT INTO authors (name) VALUES ('First') RETURNING id`);
+    expect(id).toBe(1);
+  });
+
+  it("round-trips a GENERATED ALWAYS AS IDENTITY column", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE t (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, v text)`,
+      `INSERT INTO t (v) VALUES ('a'), ('b')`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM t`);
+
+    // Without OVERRIDING SYSTEM VALUE this raises
+    // "cannot insert a non-DEFAULT value into column \"id\"".
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+    expect(await scalar<number>(`INSERT INTO t (v) VALUES ('c') RETURNING id`)).toBe(3);
+  });
+
+  it("round-trips a GENERATED BY DEFAULT AS IDENTITY column", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE t (id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v text)`,
+      `INSERT INTO t (v) VALUES ('a'), ('b')`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM t`);
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+    expect(await scalar<number>(`INSERT INTO t (v) VALUES ('c') RETURNING id`)).toBe(3);
+  });
+
+  it("rolls the whole restore back when one statement fails", async () => {
+    const target = await capture();
+
+    await sql(
+      ...WIPE,
+      // audit_log is restored before authors, so it will already have been
+      // emptied and rewritten by the time the failing insert is reached.
+      `INSERT INTO audit_log (action, at) VALUES ('survivor', '2024-03-01 00:00:00+00')`,
+      `ALTER TABLE authors ADD CONSTRAINT no_ursula CHECK (name <> 'Ursula Le Guin')`,
+    );
+    const beforeRestore = await capture();
+
+    await expect(restoreSnapshot(DATABASE_URL, target)).rejects.toThrow(/rolled back/);
+
+    // Not one statement survived, including the ones that ran before the failure.
+    expect(canonicalTables(await capture())).toBe(canonicalTables(beforeRestore));
+    expect(await scalar<string>("SELECT count(*) FROM authors")).toBe("0");
+    expect(await scalar<string>(`SELECT action FROM audit_log`)).toBe("survivor");
+  });
+
+  it("refuses a snapshot naming a table the database does not have", async () => {
+    const target = await capture();
+    await sql(`DROP TABLE chapters`);
+
+    await expect(restoreSnapshot(DATABASE_URL, target)).rejects.toThrow(
+      /"chapters" is in the snapshot but not in the database/,
+    );
+  });
+
+  it("does nothing at all in a dry run", async () => {
+    const target = await capture();
+    await sql(`UPDATE authors SET name = 'Untouched By Dry Run' WHERE id = 1`);
+    const mutated = await capture();
+
+    const result = await restoreSnapshot(DATABASE_URL, target, { dryRun: true });
+
+    expect(result.applied).toBe(false);
+    expect(result.statementCount).toBeGreaterThan(0);
+    expect(canonicalTables(await capture())).toBe(canonicalTables(mutated));
+  });
+
+  it("reports no work when the database already matches", async () => {
+    const target = await capture();
+
+    const result = await restoreSnapshot(DATABASE_URL, target);
+
+    expect(result.statementCount).toBe(0);
+    expect(result.applied).toBe(false);
+  });
+
+  it("capture -> mutate -> restore -> capture returns the same snapshot", async () => {
+    const before = await capture();
+
+    // One of every shape of change, across keyed, composite-keyed and unkeyed
+    // tables, and across the awkward column types the fixture carries.
+    await sql(
+      `UPDATE authors SET name = 'Changed', royalties = 0.01, born = '1900-01-01' WHERE id = 1`,
+      `UPDATE authors SET avatar = NULL, bio = 'added' WHERE id = 2`,
+      `DELETE FROM chapters WHERE book_id = 1 AND chapter_no = 2`,
+      `INSERT INTO chapters (book_id, chapter_no, heading) VALUES (3, 2, 'Spurious')`,
+      `INSERT INTO books (author_id, title, published) VALUES (1, 'Ghost Book', '2020-01-01')`,
+      `DELETE FROM audit_log WHERE ctid IN (SELECT ctid FROM audit_log LIMIT 1)`,
+    );
+
+    await restoreSnapshot(DATABASE_URL, before);
+    const after = await capture();
+
+    // The database matches the snapshot...
+    expect(diff(before, after)).toEqual([]);
+    // ...and so does a byte comparison of the data itself.
+    expect(canonicalTables(after)).toBe(canonicalTables(before));
+  });
+});
