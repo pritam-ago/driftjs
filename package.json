@@ -3,6 +3,29 @@
   "version": "0.1.0",
   "description": "Snapshot a Postgres database and diff two snapshots at the row level",
   "license": "MIT",
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "database",
+    "diff",
+    "snapshot",
+    "restore",
+    "cli",
+    "migration",
+    "testing",
+    "fixtures",
+    "seed-data",
+    "rollback"
+  ],
+  "author": "Vikas Pritam (https://github.com/pritam-ago)",
+  "homepage": "https://github.com/pritam-ago/driftjs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pritam-ago/driftjs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pritam-ago/driftjs/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -11,6 +34,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
