@@ -8,15 +8,20 @@ All three work today.
 
 ## What it does
 
-`drift capture` reads every table in the `public` schema of a Postgres database and
-writes a single JSON file: column types, primary key, and all rows.
+drift saves snapshots of your database into a `.drift/` directory in your project, the
+way git keeps history in `.git/`. Once you have run `drift init`, none of the commands
+need a connection string or a file path:
 
-`drift diff` compares two of those files and prints the row-level changes between them —
-inserts, updates and deletes — as a flat list of deltas.
+```
+$ drift init
+$ drift save
+$ drift status
+```
 
-`drift restore` carries a database back to the state a snapshot describes. It is the same
-engine pointed the other way: capture the current state, diff it against the target, and
-apply the resulting deltas in one transaction.
+A snapshot is a single JSON file: column types, primary key, and every row. `drift status`
+compares the live database against the newest one. `drift restore` carries the database
+back to a snapshot, using the same engine pointed the other way — capture the current
+state, diff it against the target, apply the deltas in one transaction.
 
 That is the whole product. It is a plain `SELECT`-based snapshotter, not a change data
 capture system: it reads the current state of the database when you run it, and it needs
@@ -36,6 +41,12 @@ pnpm build
 node dist/cli.js --help
 ```
 
+Then, in any project with a Postgres database:
+
+```bash
+drift init && drift save && drift status
+```
+
 Once installed globally the binary is `drift`:
 
 ```bash
@@ -45,48 +56,122 @@ drift --help
 
 ---
 
-## Usage
+## Commands
 
-### Capture a snapshot
+| | |
+|---|---|
+| `drift init` | create the workspace in the current directory |
+| `drift save [name]` | snapshot into `.drift/snapshots/`, auto-named if you omit one |
+| `drift status` | diff the live database against the newest snapshot |
+| `drift list` | saved snapshots, newest first |
+| `drift diff <a> <b>` | diff two snapshots, by saved name or by path |
+| `drift restore <name>` | carry the database back to a snapshot |
 
-```bash
-drift capture --db postgres://user:pass@localhost:5432/mydb --out base.json
+`save`, `status`, `list` and `diff` take `--json` for machine-readable output.
+
+### Getting started
+
+```console
+$ drift init
+Initialised a drift workspace.
+  created .drift/
+  created drift.config.json
+  created .gitignore (.drift/)
+
+Next: `drift save` to take your first snapshot.
+
+$ drift save
+Saved 2026-09-12T00-38-16Z  (4 tables, 10 rows)
+  from postgresql://localhost:55432/app
+
+$ drift status
+Comparing against 2026-09-12T00-38-16Z (saved just now)
+
+No changes. The database matches 2026-09-12T00-38-16Z.
 ```
 
-Without `--out`, the snapshot is printed to stdout.
+After changing some data:
 
-### Diff two snapshots
+```console
+$ drift status
+Comparing against 2026-09-12T00-38-16Z (saved 4 minutes ago)
 
-```bash
-drift capture --db postgres://... --out base.json
-# ... change some data ...
-drift capture --db postgres://... --out current.json
+authors   1 updated
+books     1 inserted
+chapters  1 deleted
 
-drift diff base.json current.json
+~ authors#1       royalties  1234.56 → 2000.00
++ books#4         "If on a winter's night a traveler"
+- chapters#(1,2)  "Anarres"
 ```
 
-### Capture and diff in one step
+Composite keys render as `#(1,2)`. A table with no primary key has no row identity, so
+its rows show as `#-`.
 
-`--delta` captures a fresh snapshot and immediately diffs it against a stored one,
-printing only the deltas:
+### Naming snapshots
 
-```bash
-drift capture --db postgres://... --delta --base base.json
+```console
+$ drift save before-migration
+$ drift list
+NAME                  SAVED           TABLES  ROWS
+before-migration      just now             4    10
+2026-09-12T00-38-16Z  4 minutes ago        4    10
 ```
 
-`--delta` requires `--base`.
+`drift save` refuses to overwrite an existing name — pass `--force` if you mean it.
 
-### Restore a snapshot
+Anywhere a snapshot is named, a path works too:
+
+```console
+$ drift diff before-migration after-migration
+$ drift diff before-migration ./backups/last-week.json
+$ drift restore before-migration
+```
+
+### In CI
+
+`drift status` exits 0 whether or not it finds drift, like `git status`. Use
+`--exit-code` to make drift a failure:
 
 ```bash
-drift restore base.json --db postgres://user:pass@localhost:5432/mydb
+drift status --exit-code || echo "the database has drifted from the baseline"
+```
+
+### Connection strings
+
+Resolved in this order, first one wins:
+
+1. `--db`
+2. the `DATABASE_URL` environment variable
+3. `DATABASE_URL` in a `.env` file in the working directory
+4. `database.url` in `drift.config.json`
+
+`drift.config.json` is meant to be committed, so `drift init` strips any credentials
+before writing a connection string into it and tells you it did. Keep credentials in
+`.env` or `DATABASE_URL`, both of which outrank the config file anyway.
+
+`.drift/` holds snapshots of your data and is added to `.gitignore` by `drift init`.
+
+### `drift capture`, the escape hatch
+
+`capture` is the low-level command the others are built on. It needs no workspace, takes
+explicit flags, and always speaks JSON — it is what to reach for in a script:
+
+```bash
+drift capture --db postgresql://... --out snapshot.json
+drift capture --db postgresql://... --delta --base snapshot.json
+```
+
+### Restoring
+
+```console
+$ drift restore before-migration
+About to restore before-migration into
+  postgresql://localhost:55432/app
+This will run 47 statements. Continue? [y/N]
 ```
 
 `--dry-run` prints the SQL it would run and executes nothing:
-
-```bash
-drift restore base.json --db postgres://... --dry-run
-```
 
 ```sql
 BEGIN;
@@ -95,11 +180,10 @@ BEGIN;
 DELETE FROM "public"."books" WHERE "id" = 4;
 
 -- updates
-UPDATE "public"."authors" SET "name" = 'Ursula Le Guin' WHERE "id" = 1;
+UPDATE "public"."authors" SET "royalties" = '1234.56' WHERE "id" = 1;
 
 -- inserts: parents before children
-INSERT INTO "public"."books" ("id", "author_id", "title") VALUES (1, 1, 'The Dispossessed');
-INSERT INTO "public"."chapters" ("book_id", "chapter_no", "heading") VALUES (1, 1, 'Shevek');
+INSERT INTO "public"."chapters" ("book_id", "chapter_no", "heading") VALUES (1, 2, 'Anarres');
 
 -- sequence resync, so the next generated key does not collide
 SELECT setval('public.authors_id_seq', COALESCE(MAX("id"), 1), MAX("id") IS NOT NULL) FROM "public"."authors";
@@ -109,6 +193,10 @@ COMMIT;
 
 Values are shown as literals there so the output is readable and runnable. A real restore
 sends them to Postgres as bind parameters; nothing is ever concatenated into SQL.
+
+`--yes` skips the confirmation, for CI. A connection string that is not local is refused
+outright unless `--yes` is passed explicitly, and when stdin is not a terminal restore
+refuses rather than hanging on a prompt nothing can answer.
 
 ---
 
@@ -169,8 +257,11 @@ Worth reading before you point it at anything you care about.
 
 ## Delta format
 
-`drift diff` prints a flat JSON array. Every entry names its own table, so deltas can be
-concatenated and reordered freely.
+`drift diff --json`, `drift status --json` and `drift capture --delta` print a flat JSON
+array. (Before v0.2, `drift diff` printed this by default; it now prints the human form
+above, and `--json` is how a script asks for these bytes.)
+
+Every entry names its own table, so deltas can be concatenated and reordered freely.
 
 ```json
 [
@@ -252,7 +343,6 @@ None of the following exists. There is no code for any of it in this repository.
   so it would quietly fail to help on most schemas.
 * Targeting individual rows in unkeyed tables by `ctid` instead of rewriting the whole
   table.
-* Human-readable diff output. Deltas are JSON today.
 * Time-travel queries.
 * MySQL and MongoDB support.
 * A web dashboard.
