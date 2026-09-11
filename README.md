@@ -7,8 +7,6 @@ shows you which rows moved, and puts them back.**
 [![npm](https://img.shields.io/npm/v/driftjs)](https://www.npmjs.com/package/driftjs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-![drift in a terminal](./docs/demo.gif)
-
 ---
 
 ## Install
@@ -90,26 +88,26 @@ at the `public` schema, and only ever moves data.
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `drift init` | create the workspace in the current directory |
-| `drift save [name]` | snapshot into `.drift/snapshots/`, auto-named if you omit one |
-| `drift status` | diff the live database against the newest snapshot |
-| `drift list` | saved snapshots, newest first |
-| `drift diff <base> <current>` | diff two snapshots, by saved name or by path |
-| `drift restore <snapshot>` | carry the database back to a snapshot |
-| `drift capture` | the low-level snapshotter, for scripts |
+| Command                       | What it does                                                  |
+| ----------------------------- | ------------------------------------------------------------- |
+| `drift init`                  | create the workspace in the current directory                 |
+| `drift save [name]`           | snapshot into `.drift/snapshots/`, auto-named if you omit one |
+| `drift status`                | diff the live database against the newest snapshot            |
+| `drift list`                  | saved snapshots, newest first                                 |
+| `drift diff <base> <current>` | diff two snapshots, by saved name or by path                  |
+| `drift restore <snapshot>`    | carry the database back to a snapshot                         |
+| `drift capture`               | the low-level snapshotter, for scripts                        |
 
 The flags that matter:
 
-| Flag | Where | What it does |
-|---|---|---|
-| `--json` | `save`, `status`, `list`, `diff` | machine-readable output instead of the human form |
-| `--exit-code` | `status` | exit 1 when there is drift, so CI fails |
-| `--force` | `save` | replace an existing snapshot of the same name |
-| `--dry-run` | `restore` | print the SQL and execute nothing |
-| `--yes` | `restore` | skip the confirmation, and allow a non-local target |
-| `--db <connection>` | `init`, `save`, `status`, `restore`, `capture` | the connection string, ahead of every other source |
+| Flag                | Where                                          | What it does                                        |
+| ------------------- | ---------------------------------------------- | --------------------------------------------------- |
+| `--json`            | `save`, `status`, `list`, `diff`               | machine-readable output instead of the human form   |
+| `--exit-code`       | `status`                                       | exit 1 when there is drift, so CI fails             |
+| `--force`           | `save`                                         | replace an existing snapshot of the same name       |
+| `--dry-run`         | `restore`                                      | print the SQL and execute nothing                   |
+| `--yes`             | `restore`                                      | skip the confirmation, and allow a non-local target |
+| `--db <connection>` | `init`, `save`, `status`, `restore`, `capture` | the connection string, ahead of every other source  |
 
 `drift diff` takes no `--db`. It reads snapshots, not databases.
 
@@ -327,34 +325,34 @@ right for free.
 
 Worth reading before you point it at anything you care about.
 
-* **All or nothing.** Every statement runs in one transaction. If any of them fails, the
+- **All or nothing.** Every statement runs in one transaction. If any of them fails, the
   whole restore rolls back and the database is left exactly as it was.
-* **Data only, never schema.** Restore does not create, drop or alter tables, and it does
+- **Data only, never schema.** Restore does not create, drop or alter tables, and it does
   not restore indexes, constraints, views or permissions. If the snapshot names a table
   the database does not have, it fails before doing anything.
-* **Foreign keys are respected.** Tables are sorted by their foreign keys, so inserts run
+- **Foreign keys are respected.** Tables are sorted by their foreign keys, so inserts run
   parents-first and deletes children-first. A cycle between two tables fails loudly and
   names them rather than guessing an order.
-* **A table that references itself has its rows sorted too.** In a `categories.parent_id`
+- **A table that references itself has its rows sorted too.** In a `categories.parent_id`
   tree the rows are ranked by depth, so a parent is inserted before its children and
   deleted after them. A row whose parent is itself is fine — Postgres checks the constraint
   at the end of the statement. Two rows that point at each other are not: no insert order
   satisfies a foreign key that is not `DEFERRABLE`, so restore names those rows and stops
   while planning, before it has touched the database.
-* **Sequences are resynced.** Rows are inserted with their original primary keys, which
+- **Sequences are resynced.** Rows are inserted with their original primary keys, which
   leaves every `serial` and identity sequence behind. Restore runs `setval` on each one it
   touched, so the next insert that omits the column does not collide.
-* **Tables with no primary key are emptied and rewritten in full.** Their rows have no
+- **Tables with no primary key are emptied and rewritten in full.** Their rows have no
   identity, so there is no way to address one for an update or a delete. The rewrite lands
   on exactly the right contents, duplicates included, and happens in the same transaction.
   Restore says which tables it did this to.
-* **Triggers stay enabled.** Restoring data fires whatever application triggers the tables
+- **Triggers stay enabled.** Restoring data fires whatever application triggers the tables
   carry. Disabling them needs table ownership, and doing it silently would be a worse
   surprise than the writes themselves.
-* **The read and the write are not one atomic unit.** Restore captures the current state
+- **The read and the write are not one atomic unit.** Restore captures the current state
   on one connection and applies on another, so a concurrent writer in between is not
   protected against. Restore into a database nothing else is writing to.
-* **An update that repoints a foreign key at a row inserted later in the same restore will
+- **An update that repoints a foreign key at a row inserted later in the same restore will
   fail.** Updates run before inserts. Postgres reports it and the transaction rolls back.
 
 ---
@@ -423,21 +421,21 @@ change without also holding on to the base snapshot.
 
 These are the behaviours worth knowing before you trust a diff:
 
-* **`numeric` and `bigint` are strings.** The Postgres driver returns them as strings to
+- **`numeric` and `bigint` are strings.** The Postgres driver returns them as strings to
   avoid precision loss, and drift stores them that way. Both sides of a diff are produced
   by the same code, so an unchanged `numeric` column never shows up as a false change.
-* **Dates are stored without a timezone shift.** A `date` column is written as
+- **Dates are stored without a timezone shift.** A `date` column is written as
   `YYYY-MM-DD` and a `timestamp without time zone` as its literal wall-clock value, so a
   snapshot taken in one timezone diffs cleanly against one taken in another.
   `timestamp with time zone` is stored as a UTC ISO string. Arrays are the one
   gap: `information_schema` reports every array only as `ARRAY`, so a `date[]`
   column is still stored as UTC instants and stays timezone-sensitive.
-* **Tables with no primary key produce only `INSERT` and `DELETE` deltas**, never
+- **Tables with no primary key produce only `INSERT` and `DELETE` deltas**, never
   `UPDATE`. Without a key there is no way to tell "this row changed" from "this row was
   removed and a different one added". Rows are matched by full content, duplicates
   included, and `key` is `null` on those deltas.
-* **Only the `public` schema is captured.**
-* **A table that disappears between snapshots** yields a `DELETE` for each of its rows.
+- **Only the `public` schema is captured.**
+- **A table that disappears between snapshots** yields a `DELETE` for each of its rows.
 
 ---
 
@@ -447,16 +445,16 @@ Restore has its own list under [How restore behaves](#how-restore-behaves). Thes
 limits of the tool as a whole, and they are the ones worth knowing before it goes anywhere
 near a database that matters.
 
-* **Whole tables are held in memory.** Capture runs `SELECT *` per table, keeps every row
+- **Whole tables are held in memory.** Capture runs `SELECT *` per table, keeps every row
   as a JavaScript object and writes the lot as one JSON document; diff and restore read
   whole snapshots back the same way. Nothing streams, nothing is batched, and a restore
   builds one statement per changed row and holds them all before it opens its transaction.
   That is the right trade for a development database of a few thousand rows and the wrong
   one for a table of millions, where the Node heap is what will stop you.
-* **Only the `public` schema.** Tables in any other schema are not captured, not diffed and
+- **Only the `public` schema.** Tables in any other schema are not captured, not diffed and
   not restored, and nothing warns you: point drift at a database that keeps its tables
   elsewhere and it will report a clean, empty snapshot.
-* **Capture and apply are not one atomic unit.** `restoreSnapshot` captures the current
+- **Capture and apply are not one atomic unit.** `restoreSnapshot` captures the current
   state on one connection and applies its statements on another, so a write that lands
   between the two is not accounted for — the plan was built against a database that has
   since moved, and the apply will overwrite that write without noticing it. The fix is
@@ -466,7 +464,7 @@ near a database that matters.
   single frozen view of the database. It is a signature change on the most-used function
   in the codebase, which is why it has not happened yet. Until it does: restore into a
   database nothing else is writing to.
-* **Partitioned tables are captured through their parent; table inheritance is not
+- **Partitioned tables are captured through their parent; table inheritance is not
   handled at all.** A partitioned parent is captured once and its partitions are skipped,
   because `SELECT *` on the parent already returns their rows. Restore inserts through the
   parent and Postgres routes each row to the partition it belongs in. Legacy `INHERITS`
@@ -474,7 +472,7 @@ near a database that matters.
   the child are both captured and the parent's rows already include the child's, which
   means those rows are stored, and restored, twice. A snapshot written by a build older
   than this one lists partitions as separate tables; recapture it rather than restoring it.
-* **Triggers fire during a restore.** Inserts, updates and deletes run as ordinary
+- **Triggers fire during a restore.** Inserts, updates and deletes run as ordinary
   statements, so application triggers fire, audit tables fill up, and a cascading foreign
   key acts on rows the plan never names. Disabling them needs table ownership, and doing
   it silently would be a worse surprise than the writes themselves, so drift leaves them
@@ -496,18 +494,18 @@ green before a pull request is merged.
 
 None of the following exists. There is no code for any of it in this repository.
 
-* **Change data capture** via logical replication or the write-ahead log. drift reads the
+- **Change data capture** via logical replication or the write-ahead log. drift reads the
   current state of a database when you run it; it does not follow a stream of changes.
-* **Any database other than Postgres.** MySQL and MongoDB adapters were prototyped early
+- **Any database other than Postgres.** MySQL and MongoDB adapters were prototyped early
   and deleted before this release, because they did nothing.
-* **A web dashboard**, or any interface beyond the terminal.
-* **Streaming**, so that a table larger than memory could be captured.
-* **Deferring constraints during a restore**, via `SET CONSTRAINTS ALL DEFERRED`, to carry
+- **A web dashboard**, or any interface beyond the terminal.
+- **Streaming**, so that a table larger than memory could be captured.
+- **Deferring constraints during a restore**, via `SET CONSTRAINTS ALL DEFERRED`, to carry
   foreign key cycles. It only works on `DEFERRABLE` constraints, which is not the default,
   so it would quietly fail to help on most schemas.
-* **Targeting individual rows in unkeyed tables by `ctid`** instead of rewriting the whole
+- **Targeting individual rows in unkeyed tables by `ctid`** instead of rewriting the whole
   table.
-* **Time-travel queries.**
+- **Time-travel queries.**
 
 ---
 
