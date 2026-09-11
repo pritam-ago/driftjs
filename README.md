@@ -144,7 +144,9 @@ These are the behaviours worth knowing before you trust a diff:
 * **Dates are stored without a timezone shift.** A `date` column is written as
   `YYYY-MM-DD` and a `timestamp without time zone` as its literal wall-clock value, so a
   snapshot taken in one timezone diffs cleanly against one taken in another.
-  `timestamp with time zone` is stored as a UTC ISO string.
+  `timestamp with time zone` is stored as a UTC ISO string. Arrays are the one
+  gap: `information_schema` reports every array only as `ARRAY`, so a `date[]`
+  column is still stored as UTC instants and stays timezone-sensitive.
 * **Tables with no primary key produce only `INSERT` and `DELETE` deltas**, never
   `UPDATE`. Without a key there is no way to tell "this row changed" from "this row was
   removed and a different one added". Rows are matched by full content, duplicates

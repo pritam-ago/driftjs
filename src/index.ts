@@ -1,2 +1,13 @@
 export { captureSnapshot } from "./postgres/snapshot";
-export type { Row, Snapshot, SnapshotMetadata, SnapshotTable } from "./types";
+export { diff } from "./diff/diff";
+export type {
+  Delta,
+  DeltaOp,
+  DeleteDelta,
+  InsertDelta,
+  Row,
+  Snapshot,
+  SnapshotMetadata,
+  SnapshotTable,
+  UpdateDelta,
+} from "./types";
