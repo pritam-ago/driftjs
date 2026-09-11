@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: driftjs-test-postgres
+    environment:
+      POSTGRES_USER: drift
+      POSTGRES_PASSWORD: drift
+      POSTGRES_DB: drift_test
+    # Deliberately not 5432, so this cannot collide with a local Postgres.
+    ports:
+      - "55432:5432"
+    # The test suite drops and recreates the public schema constantly and this
+    # database is disposable, so keep it in memory and skip the volume.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drift -d drift_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
