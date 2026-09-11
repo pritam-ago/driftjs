@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { topologicalOrder } from "../src/restore/toposort";
+import { topologicalOrder, topologicalRowOrder } from "../src/restore/toposort";
 import { encodeValue, insertStatement, quoteIdent, updateStatement } from "../src/restore/sql";
 import { allStatements, planRestore } from "../src/restore/plan";
-import type { DatabaseSchema } from "../src/postgres/schema";
+import type { DatabaseSchema, SelfReference } from "../src/postgres/schema";
 import type { Delta, Row, Snapshot } from "../src/types";
 
 /** authors <- books <- chapters, plus an unrelated unkeyed table. */
@@ -15,6 +15,7 @@ function schema(overrides: Partial<DatabaseSchema> = {}): DatabaseSchema {
   return {
     tables: new Set(["authors", "books", "chapters", "audit_log"]),
     foreignKeys: CHAIN,
+    selfReferences: new Map(),
     identityAlways: new Map(),
     sequences: [],
     ...overrides,
@@ -75,6 +76,83 @@ describe("topologicalOrder", () => {
     expect(() => topologicalOrder(["orders", "customers", "authors"], cycle)).toThrow(
       /foreign key cycle between "customers", "orders"/,
     );
+  });
+});
+
+/** categories.parent_id -> categories.id, the shape half of every real schema has. */
+const PARENT_ID: SelfReference[] = [
+  { table: "categories", columns: ["parent_id"], referencedColumns: ["id"] },
+];
+
+/** Rows of a tree, named so an assertion reads as the shape it is checking. */
+function node(id: number, parent: number | null): Row {
+  return { id, parent_id: parent, name: `n${id}` };
+}
+
+describe("topologicalRowOrder", () => {
+  it("orders a four-level tree parents first, whatever order it arrives in", () => {
+    const shuffled = [node(4, 3), node(2, 1), node(3, 2), node(1, null)];
+
+    const ids = topologicalRowOrder("categories", shuffled, PARENT_ID).map((row) => row.id);
+
+    expect(ids).toEqual([1, 2, 3, 4]);
+  });
+
+  it("puts every NULL parent first, in the order they arrived", () => {
+    const rows = [node(3, 1), node(1, null), node(4, 2), node(2, null)];
+
+    const ids = topologicalRowOrder("categories", rows, PARENT_ID).map((row) => row.id);
+
+    expect(ids).toEqual([1, 2, 3, 4]);
+  });
+
+  it("treats a parent that is not in the batch as already in the database", () => {
+    // 9 is not here, so 5 waits for nothing and the two keep their order.
+    const rows = [node(5, 9), node(6, 5)];
+
+    expect(topologicalRowOrder("categories", rows, PARENT_ID).map((row) => row.id)).toEqual([5, 6]);
+  });
+
+  it("places a row that is its own parent rather than calling it a cycle", () => {
+    // Postgres checks the foreign key at end of statement, so one INSERT does it.
+    const rows = [node(2, 1), node(1, 1)];
+
+    expect(topologicalRowOrder("categories", rows, PARENT_ID).map((row) => row.id)).toEqual([1, 2]);
+  });
+
+  it("fails loudly on two rows that reference each other, naming both", () => {
+    const rows = [node(1, 2), node(2, 1)];
+
+    expect(() => topologicalRowOrder("categories", rows, PARENT_ID)).toThrow(
+      /rows in "categories" reference each other through "parent_id" \(id=1, id=2\)/,
+    );
+  });
+
+  it("orders a composite self reference on the pair of columns, not one of them", () => {
+    const composite: SelfReference[] = [
+      {
+        table: "nodes",
+        columns: ["parent_tenant", "parent_id"],
+        referencedColumns: ["tenant", "id"],
+      },
+    ];
+    // Same id in two tenants: keyed on id alone, tenant b's row would find the
+    // wrong parent and the order would be arbitrary.
+    const rows = [
+      { tenant: "b", id: 1, parent_tenant: "b", parent_id: 2 },
+      { tenant: "a", id: 1, parent_tenant: null, parent_id: null },
+      { tenant: "b", id: 2, parent_tenant: null, parent_id: null },
+    ];
+
+    const ordered = topologicalRowOrder("nodes", rows, composite);
+
+    expect(ordered.map((row) => `${row.tenant}${row.id}`)).toEqual(["a1", "b2", "b1"]);
+  });
+
+  it("leaves rows alone when the table references nothing", () => {
+    const rows = [node(3, null), node(1, null)];
+
+    expect(topologicalRowOrder("categories", rows, [])).toBe(rows);
   });
 });
 
@@ -215,6 +293,57 @@ describe("planRestore", () => {
     expect(plan.sequences[0]!.values).toEqual(["public.authors_id_seq"]);
     // is_called false on an empty table, so nextval starts at 1 rather than 2.
     expect(plan.sequences[0]!.sql).toContain('MAX("id") IS NOT NULL');
+  });
+
+  it("orders one table's rows by their self reference, parents first", () => {
+    const tree = snapshot({ categories: { pk: ["id"], rows: [] } });
+    const selfReferencing = schema({
+      tables: new Set(["categories"]),
+      foreignKeys: new Map(),
+      selfReferences: new Map([["categories", PARENT_ID]]),
+    });
+    const deltas: Delta[] = [3, 2, 1].map((id) => ({
+      table: "categories",
+      op: "INSERT",
+      key: { id },
+      after: node(id, id === 1 ? null : id - 1),
+    }));
+
+    const plan = planRestore(deltas, tree, selfReferencing);
+
+    expect(plan.inserts.map((s) => s.values[0])).toEqual([1, 2, 3]);
+  });
+
+  it("deletes a self-referencing table's rows children first", () => {
+    const tree = snapshot({ categories: { pk: ["id"], rows: [] } });
+    const selfReferencing = schema({
+      tables: new Set(["categories"]),
+      foreignKeys: new Map(),
+      selfReferences: new Map([["categories", PARENT_ID]]),
+    });
+    const deltas: Delta[] = [1, 2, 3].map((id) => ({
+      table: "categories",
+      op: "DELETE",
+      key: { id },
+      before: node(id, id === 1 ? null : id - 1),
+    }));
+
+    const plan = planRestore(deltas, tree, selfReferencing);
+
+    expect(plan.deletes.map((s) => s.values[0])).toEqual([3, 2, 1]);
+  });
+
+  it("leaves a table that does not reference itself in delta order", () => {
+    const deltas: Delta[] = [3, 1, 2].map((id) => ({
+      table: "authors",
+      op: "INSERT",
+      key: { id },
+      after: { id, name: `a${id}` },
+    }));
+
+    const plan = planRestore(deltas, target, schema());
+
+    expect(plan.inserts.map((s) => s.values[0])).toEqual([3, 1, 2]);
   });
 
   it("plans nothing when there are no deltas", () => {

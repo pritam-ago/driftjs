@@ -143,6 +143,133 @@ describe("restore against a real Postgres", () => {
     expect(await scalar<number>(`INSERT INTO t (v) VALUES ('c') RETURNING id`)).toBe(3);
   });
 
+  it("restores a four-level tree through a self-referencing foreign key", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (
+         id        int PRIMARY KEY,
+         parent_id int REFERENCES categories(id),
+         name      text
+       )`,
+      // Inserted deepest-first, so the snapshot's row order is the wrong one and
+      // replaying it unsorted would violate the foreign key on the first row.
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, NULL, 'root')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (2, 1, 'child')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (3, 2, 'grandchild')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (4, 3, 'great-grandchild')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (5, 1, 'second root child')`,
+    );
+    const full = await capture();
+
+    await sql(`DELETE FROM categories`);
+    const empty = await capture();
+
+    // Postgres is the assertion: a child inserted before its parent raises a
+    // foreign key violation and the transaction never commits.
+    await restoreSnapshot(DATABASE_URL, full);
+    expect(await scalar<string>("SELECT count(*) FROM categories")).toBe("5");
+    expect(diff(full, await capture())).toEqual([]);
+
+    // And back to empty, which is the delete direction: a parent deleted before
+    // its children violates the same constraint.
+    await restoreSnapshot(DATABASE_URL, empty);
+    expect(await scalar<string>("SELECT count(*) FROM categories")).toBe("0");
+  });
+
+  it("restores a row whose parent is itself", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (id int PRIMARY KEY, parent_id int REFERENCES categories(id), name text)`,
+      // Legal: a foreign key is checked at the end of the statement, not per row.
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, 1, 'its own parent')`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (2, 1, 'child')`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM categories`);
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+  });
+
+  it("refuses two rows that reference each other, before touching the database", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE categories (id int PRIMARY KEY, parent_id int REFERENCES categories(id), name text)`,
+      `INSERT INTO categories (id, parent_id, name) VALUES (1, NULL, 'a'), (2, 1, 'b')`,
+      // Only reachable by updating afterwards: no insert order satisfies a
+      // foreign key that is not DEFERRABLE.
+      `UPDATE categories SET parent_id = 2 WHERE id = 1`,
+    );
+    const target = await capture();
+    await sql(`DELETE FROM categories`);
+    const beforeRestore = await capture();
+
+    await expect(restoreSnapshot(DATABASE_URL, target)).rejects.toThrow(
+      /rows in "categories" reference each other through "parent_id" \(id=1, id=2\)/,
+    );
+
+    // It failed while planning, so not one statement ran.
+    expect(canonicalTables(await capture())).toBe(canonicalTables(beforeRestore));
+  });
+
+  it("restores a partitioned table through its parent, rows landing in the right partitions", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE events (id int, at date NOT NULL, label text, PRIMARY KEY (id, at))
+         PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO events VALUES (1, '2024-03-01', 'a'), (2, '2024-07-01', 'b'),
+                                 (3, '2025-02-01', 'c'), (4, '2025-09-01', 'd')`,
+    );
+    const target = await capture();
+
+    await sql(
+      `DELETE FROM events WHERE id = 1`,
+      `UPDATE events SET label = 'wrong' WHERE id = 3`,
+      `INSERT INTO events VALUES (9, '2025-11-11', 'not in the snapshot')`,
+    );
+
+    await restoreSnapshot(DATABASE_URL, target);
+
+    expect(diff(target, await capture())).toEqual([]);
+    // Four rows in total, and each one back in the partition it belongs to -
+    // restore only ever named the parent, and Postgres did the routing.
+    expect(await scalar<string>("SELECT count(*) FROM events")).toBe("4");
+    expect(await scalar<string>("SELECT count(*) FROM events_2024")).toBe("2");
+    expect(await scalar<string>("SELECT count(*) FROM events_2025")).toBe("2");
+  });
+
+  it("orders a partitioned table against the tables it references", async () => {
+    await resetSchema();
+    await sql(
+      `CREATE TABLE tenants (id int PRIMARY KEY, name text)`,
+      `CREATE TABLE events (
+         id        int,
+         tenant_id int NOT NULL REFERENCES tenants(id),
+         at        date NOT NULL,
+         PRIMARY KEY (id, at)
+       ) PARTITION BY RANGE (at)`,
+      `CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')`,
+      `CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+      `INSERT INTO tenants VALUES (1, 'acme'), (2, 'globex')`,
+      `INSERT INTO events VALUES (1, 1, '2024-03-01'), (2, 2, '2025-02-01')`,
+    );
+    const full = await capture();
+
+    await sql(`DELETE FROM events`, `DELETE FROM tenants`);
+    const empty = await capture();
+
+    // The foreign key is the assertion in both directions: an event inserted
+    // before its tenant, or a tenant deleted before its events, rolls back.
+    await restoreSnapshot(DATABASE_URL, full);
+    expect(diff(full, await capture())).toEqual([]);
+
+    await restoreSnapshot(DATABASE_URL, empty);
+    expect(await scalar<string>("SELECT count(*) FROM events")).toBe("0");
+  });
+
   it("rolls the whole restore back when one statement fails", async () => {
     const target = await capture();
 

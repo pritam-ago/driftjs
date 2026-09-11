@@ -52,9 +52,25 @@ export async function captureSnapshot(connectionString: string): Promise<Snapsho
   await client.connect();
 
   try {
-    // Only capture tables in the public schema for now
+    // Only capture tables in the public schema for now.
+    //
+    // pg_class rather than pg_tables, for relispartition alone: pg_tables lists
+    // a partitioned parent (relkind 'p') alongside every one of its partitions,
+    // and SELECT * on the parent already returns the partitions' rows. Capturing
+    // both stores every partitioned row twice, which restores as a duplicate key
+    // violation on a table with a primary key and as silently doubled rows on a
+    // table without one. Skipping relispartition tables captures each row once,
+    // through the parent, and restore inserts through the parent too - Postgres
+    // routes each row to the partition it belongs in.
     const tablesRes = await client.query(
-      `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE 'pg_%' AND tablename <> 'sql_features'`);
+      `SELECT c.relname AS tablename
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relkind IN ('r', 'p')
+          AND NOT c.relispartition
+          AND c.relname NOT LIKE 'pg_%'
+          AND c.relname <> 'sql_features'`);
 
     const tables: Record<string, any> = {};
     const rowCount: Record<string, number> = {};

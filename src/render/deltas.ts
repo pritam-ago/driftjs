@@ -104,24 +104,48 @@ export function renderKey(key: Row | null): string {
   return values.length === 1 ? values[0]! : `(${values.join(",")})`;
 }
 
+// Tried in this order, so a table carrying both "title" and "slug" shows the
+// title. Matched case-insensitively, because a column may be "Title".
+const LABEL_COLUMNS = ["name", "title", "label", "slug", "email"] as const;
+
+// The canonical hyphenated form, which is how Postgres renders a uuid. A uuid
+// identifies a row without describing it, so it is the last thing worth showing.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * One value that says something about a row.
  *
- * The first non-key column holding a string is almost always the human-meaningful
- * one - a title, a name, a heading - so it beats the numeric foreign key that
- * usually comes first in column order.
+ * A column actually named for a human - name, title, label, slug, email - beats
+ * everything else, because "the first string column" lands on a status enum or a
+ * uuid on plenty of real tables. Failing that it is the first string that is not
+ * a uuid, and failing that the first string at all: a uuid says little, but it
+ * still beats showing nothing.
  */
 function describe(row: Row, key: Row | null, maxValue: number): string {
   const keyColumns = new Set(key ? Object.keys(key) : []);
+  // The key is already printed in the label, so it never doubles as the value.
   const candidates = Object.keys(row).filter((column) => !keyColumns.has(column));
 
-  const stringColumn = candidates.find((column) => typeof row[column] === "string");
-  const column = stringColumn ?? candidates.find((c) => row[c] !== null) ?? candidates[0];
+  const named = LABEL_COLUMNS.map((wanted) =>
+    candidates.find((column) => column.toLowerCase() === wanted && meaningful(row[column])),
+  ).find((column) => column !== undefined);
+
+  const column =
+    named ??
+    candidates.find((c) => meaningful(row[c])) ??
+    candidates.find((c) => typeof row[c] === "string") ??
+    candidates.find((c) => row[c] !== null) ??
+    candidates[0];
 
   if (column === undefined) return "";
   const value = row[column];
   const rendered = typeof value === "string" ? `"${value}"` : format(value);
   return truncate(rendered, maxValue + 2);
+}
+
+/** A string that describes the row rather than merely identifying it. */
+function meaningful(value: unknown): boolean {
+  return typeof value === "string" && !UUID.test(value);
 }
 
 function format(value: unknown): string {
