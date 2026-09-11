@@ -1,14 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-  "moduleResolution": "node16", // Use node16 for Node.js projects
-    "outDir": "dist",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "noUncheckedIndexedAccess": false,
+    "noEmit": true,
     "types": ["node"]
   },
-  "include": ["packages/*/src"]
+  "include": ["src", "test", "tsup.config.ts", "vitest.config.ts"]
 }

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: drift
+          POSTGRES_PASSWORD: drift
+          POSTGRES_DB: drift_test
+        # Same port as docker-compose.yml, so DATABASE_URL's default works
+        # unchanged here and on a developer machine.
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U drift -d drift_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      # The published binary has to keep its shebang and its executable bit.
+      - name: Pack, install the tarball, and run the bin
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          npm init -y > /dev/null
+          npm install ./driftjs-*.tgz
+          head -1 node_modules/driftjs/dist/cli.js | grep -q '^#!/usr/bin/env node'
+          test -x node_modules/driftjs/dist/cli.js
+          ./node_modules/.bin/drift --version

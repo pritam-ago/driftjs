@@ -1,15 +1,5 @@
-# Node modules
 node_modules/
-packages/core/node_modules/
-packages/cli/node_modules/
-packages/adapter-postgres/node_modules/
-
-# Build output
-packages/core/build/
-packages/cli/build/
-packages/adapter-postgres/build/
-packages/adapter-mysql/build/
-packages/adapter-mongodb/build/
+dist/
 
 # Logs
 *.log
@@ -27,3 +17,6 @@ Thumbs.db
 
 # Snapshot output
 snapshot.json
+*.snapshot.json
+
+/snapshots/
