@@ -1,4 +1,5 @@
 import { captureSnapshot } from "../postgres/snapshot";
+import { stripCredentials } from "../workspace/config";
 import { diff } from "../diff/diff";
 import { fail, readSnapshot, writeJson } from "./io";
 import type { Snapshot } from "../types";
@@ -15,7 +16,7 @@ export async function capture(opts: CaptureOptions): Promise<void> {
   if (opts.base && !opts.delta) fail("--base only means something together with --delta");
 
   try {
-    process.stderr.write(`capturing snapshot from ${opts.db}\n`);
+    process.stderr.write(`capturing snapshot from ${stripCredentials(opts.db)}\n`);
     const snapshot = await captureSnapshot(opts.db);
 
     if (!opts.delta) {

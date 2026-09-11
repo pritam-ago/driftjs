@@ -153,7 +153,7 @@ describe("drift restore", () => {
     drift("capture", "--db", DATABASE_URL, "--out", file("target.json"));
     await sql(`DELETE FROM chapters`, `DELETE FROM books`, `UPDATE authors SET name = 'Mutated'`);
 
-    const restore = drift("restore", file("target.json"), "--db", DATABASE_URL);
+    const restore = drift("restore", file("target.json"), "--db", DATABASE_URL, "--yes");
     expect(restore.status).toBe(0);
     expect(restore.stderr).toContain("restored");
 
@@ -166,14 +166,14 @@ describe("drift restore", () => {
   it("says so when the database already matches", () => {
     drift("capture", "--db", DATABASE_URL, "--out", file("target.json"));
 
-    const result = drift("restore", file("target.json"), "--db", DATABASE_URL);
+    const result = drift("restore", file("target.json"), "--db", DATABASE_URL, "--yes");
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("already matches");
   });
 
   it("fails with a readable message when the snapshot file is missing", () => {
-    const result = drift("restore", file("nope.json"), "--db", DATABASE_URL);
+    const result = drift("restore", file("nope.json"), "--db", DATABASE_URL, "--yes");
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("cannot read snapshot file");

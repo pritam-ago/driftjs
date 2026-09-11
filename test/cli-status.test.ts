@@ -216,16 +216,106 @@ describe("drift restore by name", () => {
     drift(["save", "baseline"]);
     await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
 
-    const result = drift(["restore", "baseline", "--db", DATABASE_URL]);
+    const result = drift(["restore", "baseline", "--db", DATABASE_URL, "--yes"]);
 
     expect(result.status).toBe(0);
     expect(drift(["status"]).stdout).toContain("No changes");
   });
 
   it("reports an unknown name with a pointer to drift list", () => {
-    const result = drift(["restore", "nope", "--db", DATABASE_URL]);
+    const result = drift(["restore", "nope", "--db", DATABASE_URL, "--yes"]);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('no snapshot named "nope"');
+  });
+});
+
+describe("restore safety", () => {
+  beforeEach(() => {
+    drift(["save", "baseline"]);
+  });
+
+  it("refuses a non-local target without --yes", () => {
+    const result = drift(["restore", "baseline", "--db", "postgresql://db.example.com:5432/prod"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("refusing to restore into a non-local database");
+    expect(result.stderr).toContain("--yes");
+  });
+
+  it("does not leak the password of the target it refused", () => {
+    const result = drift([
+      "restore",
+      "baseline",
+      "--db",
+      "postgresql://admin:sup3rsecret@db.example.com:5432/prod",
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("sup3rsecret");
+    expect(result.stderr).toContain("db.example.com");
+  });
+
+  it("refuses rather than hanging when stdin cannot answer", async () => {
+    await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
+
+    // spawnSync gives the child a pipe for stdin, so there is no TTY to prompt.
+    const result = drift(["restore", "baseline", "--db", DATABASE_URL]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("refusing to restore without confirmation");
+    expect(result.stderr).toContain("statements would run");
+    // Nothing was applied.
+    expect(drift(["status"]).stdout).toContain("1 updated");
+  });
+
+  it("says how many statements are about to run", async () => {
+    await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
+
+    const result = drift(["restore", "baseline", "--db", DATABASE_URL]);
+
+    expect(result.stderr).toMatch(/\d+ statements would run/);
+  });
+
+  it("applies without a prompt when --yes is passed", async () => {
+    await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
+
+    const result = drift(["restore", "baseline", "--db", DATABASE_URL, "--yes"]);
+
+    expect(result.status).toBe(0);
+    expect(drift(["status"]).stdout).toContain("No changes");
+  });
+
+  it("allows a non-local target once --yes is explicit", () => {
+    // Still fails to connect, but past the refusal - the message is a
+    // connection error, not the guard.
+    const result = drift([
+      "restore",
+      "baseline",
+      "--db",
+      "postgresql://drift:drift@db.invalid:5432/prod",
+      "--yes",
+    ]);
+
+    expect(result.stderr).not.toContain("refusing to restore into a non-local");
+  });
+
+  it("needs no confirmation for a dry run, and changes nothing", async () => {
+    await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
+
+    const result = drift(["restore", "baseline", "--db", DATABASE_URL, "--dry-run"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("BEGIN;");
+    expect(drift(["status"]).stdout).toContain("1 updated");
+  });
+
+  it("resolves the connection string from the environment, with no --db", async () => {
+    await sql(`UPDATE authors SET name = 'Changed' WHERE id = 1`);
+
+    const result = drift(["restore", "baseline", "--yes"]);
+
+    expect(result.status).toBe(0);
+    expect(drift(["status"]).stdout).toContain("No changes");
   });
 });

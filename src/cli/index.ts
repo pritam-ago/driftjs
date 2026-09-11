@@ -64,10 +64,11 @@ program
 
 program
   .command("restore")
-  .description("Restore a snapshot file back into a Postgres database")
-  .argument("<snapshot>", "Snapshot JSON file to restore")
-  .requiredOption("--db <connection>", "Postgres connection string")
+  .description("Restore a snapshot back into a Postgres database, by saved name or by path")
+  .argument("<snapshot>", "Snapshot to restore: a saved name or a JSON file path")
+  .option("--db <connection>", "Postgres connection string")
   .option("--dry-run", "Print the SQL this would run and execute nothing")
+  .option("--yes", "Skip the confirmation, and allow a non-local target")
   .action(restoreCommand);
 
 program.parse(process.argv);
