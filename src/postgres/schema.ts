@@ -112,20 +112,24 @@ const GENERATED_COLUMNS_SQL = `
 `;
 
 export async function readSchema(client: Client): Promise<DatabaseSchema> {
-  const [tableRows, fkRows, selfRows, generatedRows] = await Promise.all([
-    client.query<{ table_name: string }>(TABLES_SQL),
-    client.query<{ child: string; parent: string }>(FOREIGN_KEYS_SQL),
-    client.query<{ table_name: string; columns: string[]; referenced_columns: string[] }>(
-      SELF_REFERENCES_SQL,
-    ),
-    client.query<{
-      table_name: string;
-      column_name: string;
-      is_identity: string;
-      identity_generation: string | null;
-      sequence: string | null;
-    }>(GENERATED_COLUMNS_SQL),
-  ]);
+  // One query at a time on the one connection. Issuing all four at once made pg
+  // queue them and warn that it will stop doing so in pg 9 - a DeprecationWarning
+  // printed before every restore, and a hard failure later. Four catalog reads
+  // against an already-open connection cost nothing worth parallelising.
+  const tableRows = await client.query<{ table_name: string }>(TABLES_SQL);
+  const fkRows = await client.query<{ child: string; parent: string }>(FOREIGN_KEYS_SQL);
+  const selfRows = await client.query<{
+    table_name: string;
+    columns: string[];
+    referenced_columns: string[];
+  }>(SELF_REFERENCES_SQL);
+  const generatedRows = await client.query<{
+    table_name: string;
+    column_name: string;
+    is_identity: string;
+    identity_generation: string | null;
+    sequence: string | null;
+  }>(GENERATED_COLUMNS_SQL);
 
   const tables = new Set(tableRows.rows.map((row) => row.table_name));
 

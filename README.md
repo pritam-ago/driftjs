@@ -1,78 +1,44 @@
 # drift
 
-**drift snapshots a Postgres database, diffs two snapshots at the row level, and restores a snapshot back into the database.**
+**Your local Postgres is full of data you did not mean to change. drift snapshots it,
+shows you which rows moved, and puts them back.**
 
-All three work today.
+[![CI](https://github.com/pritam-ago/driftjs/actions/workflows/ci.yml/badge.svg)](https://github.com/pritam-ago/driftjs/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/driftjs)](https://www.npmjs.com/package/driftjs)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
----
-
-## What it does
-
-drift saves snapshots of your database into a `.drift/` directory in your project, the
-way git keeps history in `.git/`. Once you have run `drift init`, none of the commands
-need a connection string or a file path:
-
-```
-$ drift init
-$ drift save
-$ drift status
-```
-
-A snapshot is a single JSON file: column types, primary key, and every row. `drift status`
-compares the live database against the newest one. `drift restore` carries the database
-back to a snapshot, using the same engine pointed the other way — capture the current
-state, diff it against the target, apply the deltas in one transaction.
-
-That is the whole product. It is a plain `SELECT`-based snapshotter, not a change data
-capture system: it reads the current state of the database when you run it, and it needs
-no replication slots, no publications, and no special server configuration.
+![drift in a terminal](./docs/demo.gif)
 
 ---
 
 ## Install
 
-Requires Node 18+ and a reachable Postgres database.
-
 ```bash
-git clone https://github.com/your-org/driftjs.git
-cd driftjs
-pnpm install
-pnpm build
-node dist/cli.js --help
+npm i -g driftjs
 ```
 
-Then, in any project with a Postgres database:
-
-```bash
-drift init && drift save && drift status
-```
-
-Once installed globally the binary is `drift`:
-
-```bash
-npm install -g driftjs
-drift --help
-```
+Node 18 or newer, and a Postgres database you can reach. No server-side setup: drift uses
+ordinary `SELECT`s, and needs no replication slot, no publication and no superuser.
 
 ---
 
-## Commands
+## Quickstart
 
-| | |
-|---|---|
-| `drift init` | create the workspace in the current directory |
-| `drift save [name]` | snapshot into `.drift/snapshots/`, auto-named if you omit one |
-| `drift status` | diff the live database against the newest snapshot |
-| `drift list` | saved snapshots, newest first |
-| `drift diff <a> <b>` | diff two snapshots, by saved name or by path |
-| `drift restore <name>` | carry the database back to a snapshot |
+drift needs a connection string before it can do anything. Put it in `.env`, which is where
+the password belongs — `drift init` will not write one into a file meant to be committed:
 
-`save`, `status`, `list` and `diff` take `--json` for machine-readable output.
+```console
+$ cat .env
+DATABASE_URL=postgres://drift:drift@localhost:55432/app
+```
 
-### Getting started
+`drift init` then creates a `.drift/` directory the way `git init` creates `.git/`, and
+after that no command needs a connection string or a file path:
 
 ```console
 $ drift init
+drift: stripped credentials from the connection string before writing drift.config.json.
+  It is meant to be committed. Keep credentials in .env or DATABASE_URL.
 Initialised a drift workspace.
   created .drift/
   created drift.config.json
@@ -81,20 +47,21 @@ Initialised a drift workspace.
 Next: `drift save` to take your first snapshot.
 
 $ drift save
-Saved 2026-09-12T00-38-16Z  (4 tables, 10 rows)
-  from postgresql://localhost:55432/app
+Saved 2026-09-11T22-03-37Z  (4 tables, 10 rows)
+  from postgres://localhost:55432/app
 
 $ drift status
-Comparing against 2026-09-12T00-38-16Z (saved just now)
+Comparing against 2026-09-11T22-03-37Z (saved just now)
 
-No changes. The database matches 2026-09-12T00-38-16Z.
+No changes. The database matches 2026-09-11T22-03-37Z.
 ```
 
-After changing some data:
+Then run the migration, the test suite, or the seed script you are unsure about, and ask
+again:
 
 ```console
 $ drift status
-Comparing against 2026-09-12T00-38-16Z (saved 4 minutes ago)
+Comparing against 2026-09-11T22-03-37Z (saved just now)
 
 authors   1 updated
 books     1 inserted
@@ -105,75 +72,136 @@ chapters  1 deleted
 - chapters#(1,2)  "Anarres"
 ```
 
-Composite keys render as `#(1,2)`. A table with no primary key has no row identity, so
-its rows show as `#-`.
+Composite keys render as `#(1,2)`. A table with no primary key has no row identity, so its
+rows show as `#-`.
 
-### Naming snapshots
+---
+
+## Why not pg_dump?
+
+`pg_dump` gives you a file; drift gives you an answer. A dump can put your database back,
+but it cannot tell you that one row in `authors` gained a royalty and a chapter went
+missing — for that you would restore it somewhere else and compare by hand. Use `pg_dump`
+when you want a backup, a full-fidelity copy including schema, indexes and permissions, or
+anything touching a production database: drift reads whole tables into memory, only looks
+at the `public` schema, and only ever moves data.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `drift init` | create the workspace in the current directory |
+| `drift save [name]` | snapshot into `.drift/snapshots/`, auto-named if you omit one |
+| `drift status` | diff the live database against the newest snapshot |
+| `drift list` | saved snapshots, newest first |
+| `drift diff <base> <current>` | diff two snapshots, by saved name or by path |
+| `drift restore <snapshot>` | carry the database back to a snapshot |
+| `drift capture` | the low-level snapshotter, for scripts |
+
+The flags that matter:
+
+| Flag | Where | What it does |
+|---|---|---|
+| `--json` | `save`, `status`, `list`, `diff` | machine-readable output instead of the human form |
+| `--exit-code` | `status` | exit 1 when there is drift, so CI fails |
+| `--force` | `save` | replace an existing snapshot of the same name |
+| `--dry-run` | `restore` | print the SQL and execute nothing |
+| `--yes` | `restore` | skip the confirmation, and allow a non-local target |
+| `--db <connection>` | `init`, `save`, `status`, `restore`, `capture` | the connection string, ahead of every other source |
+
+`drift diff` takes no `--db`. It reads snapshots, not databases.
+
+### Naming and comparing
 
 ```console
-$ drift save before-migration
+$ drift save after-import
+Saved after-import  (4 tables, 10 rows)
+  from postgres://localhost:55432/app
+
 $ drift list
-NAME                  SAVED           TABLES  ROWS
-before-migration      just now             4    10
-2026-09-12T00-38-16Z  4 minutes ago        4    10
+NAME                  SAVED     TABLES  ROWS
+after-import          just now       4  10
+2026-09-11T22-03-37Z  just now       4  10
 ```
 
-`drift save` refuses to overwrite an existing name — pass `--force` if you mean it.
+Saving over an existing name is refused unless you mean it:
+
+```console
+$ drift save after-import
+drift: "after-import" already exists (.drift\snapshots\after-import.json, saved just now).
+  Use --force to replace it.
+```
 
 Anywhere a snapshot is named, a path works too:
 
 ```console
-$ drift diff before-migration after-migration
+$ drift diff 2026-09-11T22-03-37Z after-import
+authors   1 updated
+books     1 inserted
+chapters  1 deleted
+
+~ authors#1       royalties  1234.56 → 2000.00
++ books#4         "If on a winter's night a traveler"
+- chapters#(1,2)  "Anarres"
+
 $ drift diff before-migration ./backups/last-week.json
-$ drift restore before-migration
 ```
 
 ### In CI
 
-`drift status` exits 0 whether or not it finds drift, like `git status`. Use
-`--exit-code` to make drift a failure:
+`drift status` exits 0 whether or not it finds drift, like `git status`. `--exit-code`
+makes drift a failure:
 
-```bash
-drift status --exit-code || echo "the database has drifted from the baseline"
+```console
+$ drift status --exit-code; echo "exit: $?"
+exit: 1
 ```
 
-### Connection strings
+`--json` is what a script reads: one entry per changed row, the same shape from `status`,
+`diff` and `capture --delta`. Trimmed here after the first change and a half:
 
-Resolved in this order, first one wins:
-
-1. `--db`
-2. the `DATABASE_URL` environment variable
-3. `DATABASE_URL` in a `.env` file in the working directory
-4. `database.url` in `drift.config.json`
-
-`drift.config.json` is meant to be committed, so `drift init` strips any credentials
-before writing a connection string into it and tells you it did. Keep credentials in
-`.env` or `DATABASE_URL`, both of which outrank the config file anyway.
-
-`.drift/` holds snapshots of your data and is added to `.gitignore` by `drift init`.
-
-### `drift capture`, the escape hatch
-
-`capture` is the low-level command the others are built on. It needs no workspace, takes
-explicit flags, and always speaks JSON — it is what to reach for in a script:
-
-```bash
-drift capture --db postgresql://... --out snapshot.json
-drift capture --db postgresql://... --delta --base snapshot.json
+```console
+$ drift diff 2026-09-11T22-03-37Z after-import --json
+[
+  {
+    "table": "authors",
+    "op": "UPDATE",
+    "key": {
+      "id": 1
+    },
+    "before": {
+      "royalties": "1234.56"
+    },
+    "after": {
+      "royalties": "2000.00"
+    }
+  },
+  {
+    "table": "books",
+    "op": "INSERT",
+    "key": {
+      "id": 4
+    },
+    "after": {
+      "id": 4,
+...
 ```
 
 ### Restoring
 
+`--dry-run` prints the SQL a restore would run, and executes nothing:
+
 ```console
-$ drift restore before-migration
-About to restore before-migration into
-  postgresql://localhost:55432/app
-This will run 47 statements. Continue? [y/N]
-```
+$ drift restore 2026-09-11T22-03-37Z --dry-run
+-- drift restore --dry-run
+-- Nothing below has been executed.
+-- Values are rendered as literals so this is readable and runnable;
+-- an actual restore sends them as bind parameters.
+--
+-- 1 delete, 1 update, 1 insert, 2 sequence resyncs
 
-`--dry-run` prints the SQL it would run and executes nothing:
-
-```sql
 BEGIN;
 
 -- deletes: children before parents
@@ -187,16 +215,111 @@ INSERT INTO "public"."chapters" ("book_id", "chapter_no", "heading") VALUES (1, 
 
 -- sequence resync, so the next generated key does not collide
 SELECT setval('public.authors_id_seq', COALESCE(MAX("id"), 1), MAX("id") IS NOT NULL) FROM "public"."authors";
+SELECT setval('public.books_id_seq', COALESCE(MAX("id"), 1), MAX("id") IS NOT NULL) FROM "public"."books";
 
 COMMIT;
 ```
 
-Values are shown as literals there so the output is readable and runnable. A real restore
-sends them to Postgres as bind parameters; nothing is ever concatenated into SQL.
+Values are literals there so the output is readable and runnable. A real restore sends them
+to Postgres as bind parameters; nothing is ever concatenated into SQL.
 
-`--yes` skips the confirmation, for CI. A connection string that is not local is refused
-outright unless `--yes` is passed explicitly, and when stdin is not a terminal restore
-refuses rather than hanging on a prompt nothing can answer.
+A real restore asks first, naming the snapshot, the target database, and how many statements
+are about to run. When nothing is there to answer — a CI job, a pipe — it refuses rather
+than hanging on a prompt:
+
+```console
+$ drift restore 2026-09-11T22-03-37Z
+drift: refusing to restore without confirmation.
+  target: postgres://localhost:55432/app
+  5 statements would run. Pass --yes to run them unattended.
+
+$ drift restore 2026-09-11T22-03-37Z --yes
+restored, 5 statements committed
+```
+
+A connection string that is not local is refused outright unless `--yes` is passed
+explicitly.
+
+### `drift capture`, the escape hatch
+
+`capture` is the low-level command the others are built on. It needs no workspace, takes
+explicit flags, and always speaks JSON:
+
+```console
+$ drift capture --db "$DATABASE_URL" --out snapshot.json
+capturing snapshot from postgres://localhost:55432/app
+written to snapshot.json
+```
+
+`drift capture --db ... --delta --base snapshot.json` prints the deltas against an existing
+snapshot instead of the snapshot itself.
+
+---
+
+## Configuration
+
+`drift init` writes `drift.config.json`:
+
+```console
+$ cat drift.config.json
+{
+  "database": {
+    "url": "postgres://localhost:55432/app"
+  }
+}
+```
+
+The connection string is resolved in this order, first one wins:
+
+1. `--db`
+2. the `DATABASE_URL` environment variable
+3. `DATABASE_URL` in a `.env` file in the working directory
+4. `database.url` in `drift.config.json`
+
+**`drift.config.json` is meant to be committed, and holds no secrets.** `drift init` strips
+any username and password before writing the connection string into it, and says so when it
+does.
+
+That has a consequence worth stating plainly: if your database needs a password, the config
+file alone cannot connect to it. What it records is the host, port and database name — the
+part that is the same for everyone on the team — and the password has to come from one of
+the three sources above it. Put it in `.env`, and the two halves meet. Without it you get
+the driver's own complaint, which is not a friendly one:
+
+```console
+$ drift save
+drift: SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string
+```
+
+`.drift/` holds snapshots of your data, so `drift init` adds it to `.gitignore`:
+
+```console
+$ cat .gitignore
+.drift/
+```
+
+---
+
+## How it works
+
+Three steps, and the third is one transaction.
+
+1. **Capture.** `captureSnapshot` lists the tables in the `public` schema, reads each one's
+   column types from `information_schema`, its primary key from `pg_index`, and its rows
+   with `SELECT *`. The result is a single JSON document.
+2. **Diff.** `diff` is pure — no database, no files. It matches rows by primary key and
+   emits one delta per change: `INSERT`, `UPDATE` (carrying only the columns that differ),
+   or `DELETE` (carrying the whole removed row). Tables with no primary key are matched by
+   full row content instead.
+3. **Apply.** `restore` captures the current state, diffs it against the target snapshot,
+   and turns the deltas into ordered statements: deletes first, children before parents;
+   then updates; then inserts, parents before children; then a `setval` for every sequence
+   it touched. All of it runs between one `BEGIN` and one `COMMIT`, so a failure anywhere
+   leaves the database exactly as it was.
+
+There is no second comparison engine inside restore. It asks `diff` the same question
+`drift status` does, pointed the other way — so whatever diff gets right, restore gets
+right for free.
 
 ---
 
@@ -264,10 +387,7 @@ Worth reading before you point it at anything you care about.
 ## Delta format
 
 `drift diff --json`, `drift status --json` and `drift capture --delta` print a flat JSON
-array. (Before v0.2, `drift diff` printed this by default; it now prints the human form
-above, and `--json` is how a script asks for these bytes.)
-
-Every entry names its own table, so deltas can be concatenated and reordered freely.
+array. Every entry names its own table, so deltas can be concatenated and reordered freely.
 
 ```json
 [
@@ -362,37 +482,32 @@ near a database that matters.
 
 ---
 
-## Development
+## Contributing
 
-```bash
-docker compose up -d      # Postgres 16 on port 55432
-pnpm install
-pnpm build
-pnpm test
-```
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
+getting the test database up, running the suite, and the commit convention.
 
-The test suite runs against that container — there are no mocks. Set `DATABASE_URL` to
-point somewhere else; it defaults to
-`postgres://drift:drift@localhost:55432/drift_test`.
-
-**The tests drop and recreate the `public` schema between cases.** Never point
-`DATABASE_URL` at a database you care about.
+The tests run against a real Postgres in Docker — there are no mocks — and CI has to be
+green before a pull request is merged.
 
 ---
 
-## v2 — not built
+## Roadmap — not built
 
 None of the following exists. There is no code for any of it in this repository.
 
-* Change data capture via logical replication / the write-ahead log.
-* Deferring constraints during a restore, via `SET CONSTRAINTS ALL DEFERRED`, to carry
+* **Change data capture** via logical replication or the write-ahead log. drift reads the
+  current state of a database when you run it; it does not follow a stream of changes.
+* **Any database other than Postgres.** MySQL and MongoDB adapters were prototyped early
+  and deleted before this release, because they did nothing.
+* **A web dashboard**, or any interface beyond the terminal.
+* **Streaming**, so that a table larger than memory could be captured.
+* **Deferring constraints during a restore**, via `SET CONSTRAINTS ALL DEFERRED`, to carry
   foreign key cycles. It only works on `DEFERRABLE` constraints, which is not the default,
   so it would quietly fail to help on most schemas.
-* Targeting individual rows in unkeyed tables by `ctid` instead of rewriting the whole
+* **Targeting individual rows in unkeyed tables by `ctid`** instead of rewriting the whole
   table.
-* Time-travel queries.
-* MySQL and MongoDB support.
-* A web dashboard.
+* **Time-travel queries.**
 
 ---
 
