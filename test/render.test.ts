@@ -108,6 +108,91 @@ describe("renderDeltas", () => {
     expect(plain(EXAMPLE)).not.toContain("author_id");
   });
 
+  it("prefers a column named for a human over an earlier string column", () => {
+    const output = plain([
+      {
+        table: "users",
+        op: "INSERT",
+        key: { id: 1 },
+        after: { id: 1, status: "active", name: "Ada Lovelace" },
+      },
+    ]);
+
+    expect(output).toContain(`"Ada Lovelace"`);
+    expect(output).not.toContain("active");
+  });
+
+  it("takes title over slug when a table carries both", () => {
+    const output = plain([
+      {
+        table: "posts",
+        op: "INSERT",
+        key: { id: 1 },
+        after: { id: 1, slug: "a-post", title: "A Post" },
+      },
+    ]);
+
+    expect(output).toContain(`"A Post"`);
+    expect(output).not.toContain("a-post");
+  });
+
+  it("matches a label column whatever its case", () => {
+    const output = plain([
+      { table: "t", op: "INSERT", key: { id: 1 }, after: { id: 1, kind: "x", Title: "Cased" } },
+    ]);
+
+    expect(output).toContain(`"Cased"`);
+  });
+
+  it("skips a uuid in favour of the next string", () => {
+    const output = plain([
+      {
+        table: "orders",
+        op: "INSERT",
+        key: { id: 1 },
+        after: { id: 1, external_id: "6f1c9d2e-6a7b-4c3d-8e9f-0a1b2c3d4e5f", state: "shipped" },
+      },
+    ]);
+
+    expect(output).toContain(`"shipped"`);
+    expect(output).not.toContain("6f1c9d2e");
+  });
+
+  it("falls back to a uuid when a uuid is all there is", () => {
+    const output = plain([
+      {
+        table: "links",
+        op: "INSERT",
+        key: { id: 1 },
+        after: { id: 1, target_id: "6F1C9D2E-6A7B-4C3D-8E9F-0A1B2C3D4E5F" },
+      },
+    ]);
+
+    // Uppercase, to show the shape is matched case-insensitively either way.
+    expect(output).toContain(`"6F1C9D2E-6A7B-4C3D-8E9F-0A1B2C3D4E5F"`);
+  });
+
+  it("skips a uuid held in a label column too", () => {
+    const output = plain([
+      {
+        table: "t",
+        op: "INSERT",
+        key: { id: 1 },
+        after: { id: 1, name: "6f1c9d2e-6a7b-4c3d-8e9f-0a1b2c3d4e5f", note: "readable" },
+      },
+    ]);
+
+    expect(output).toContain(`"readable"`);
+  });
+
+  it("falls back to the first non-null value when no column holds a string", () => {
+    const output = plain([
+      { table: "t", op: "INSERT", key: { id: 1 }, after: { id: 1, a: null, b: 42 } },
+    ]);
+
+    expect(output).toContain("42");
+  });
+
   it("emits no escape codes when colour is off", () => {
     expect(plain(EXAMPLE)).not.toContain(ESC);
   });
