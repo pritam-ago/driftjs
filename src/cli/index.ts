@@ -6,6 +6,7 @@ import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
 import { saveCommand } from "./save";
 import { listCommand } from "./list";
+import { statusCommand } from "./status";
 
 const program = new Command();
 
@@ -30,6 +31,14 @@ program
   .action(saveCommand);
 
 program
+  .command("status")
+  .description("Diff the live database against the newest saved snapshot")
+  .option("--db <connection>", "Postgres connection string")
+  .option("--json", "Print machine-readable JSON")
+  .option("--exit-code", "Exit 1 when there is drift, for CI")
+  .action(statusCommand);
+
+program
   .command("list")
   .description("List saved snapshots, newest first")
   .option("--json", "Print machine-readable JSON")
@@ -46,9 +55,10 @@ program
 
 program
   .command("diff")
-  .description("Diff two snapshot files at the row level")
-  .argument("<base>", "Base snapshot JSON file")
-  .argument("<current>", "Current snapshot JSON file")
+  .description("Diff two snapshots at the row level, by saved name or by path")
+  .argument("<base>", "Base snapshot: a saved name or a JSON file path")
+  .argument("<current>", "Current snapshot: a saved name or a JSON file path")
+  .option("--json", "Print machine-readable JSON")
   .option("--out <file>", "Write JSON to this file instead of stdout")
   .action(diffCommand);
 

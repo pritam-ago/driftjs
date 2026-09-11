@@ -1,5 +1,6 @@
 import { restoreSnapshot } from "../postgres/restore";
 import { renderPlan } from "../restore/render";
+import { resolveSnapshotArgument } from "../workspace/workspace";
 import { fail, readSnapshot } from "./io";
 
 export interface RestoreCommandOptions {
@@ -12,7 +13,8 @@ export async function restoreCommand(
   opts: RestoreCommandOptions,
 ): Promise<void> {
   try {
-    const target = readSnapshot(snapshotFile);
+    const file = resolveSnapshotArgument(snapshotFile, process.cwd());
+    const target = readSnapshot(file);
 
     if (!opts.dryRun) process.stderr.write(`restoring ${snapshotFile} into ${opts.db}\n`);
 

@@ -58,7 +58,7 @@ describe("drift CLI", () => {
     await sql(`UPDATE users SET email = 'b@example.com' WHERE id = 1`);
     drift("capture", "--db", DATABASE_URL, "--out", file("b.json"));
 
-    const result = drift("diff", file("a.json"), file("b.json"));
+    const result = drift("diff", file("a.json"), file("b.json"), "--json");
 
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
@@ -87,7 +87,7 @@ describe("drift CLI", () => {
     );
     drift("capture", "--db", DATABASE_URL, "--out", file("b.json"));
 
-    const viaDiff = drift("diff", file("a.json"), file("b.json"));
+    const viaDiff = drift("diff", file("a.json"), file("b.json"), "--json");
     const viaDelta = drift("capture", "--db", DATABASE_URL, "--delta", "--base", file("a.json"));
 
     expect(viaDiff.status).toBe(0);
@@ -105,7 +105,7 @@ describe("drift CLI", () => {
   });
 
   it("fails with a readable message when a snapshot file is missing", () => {
-    const result = drift("diff", file("nope.json"), file("also-nope.json"));
+    const result = drift("diff", file("nope.json"), file("also-nope.json"), "--json");
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("cannot read snapshot file");
@@ -114,7 +114,7 @@ describe("drift CLI", () => {
   it("fails with a readable message when a snapshot file is not JSON", () => {
     fs.writeFileSync(file("junk.json"), "this is not json");
 
-    const result = drift("diff", file("junk.json"), file("junk.json"));
+    const result = drift("diff", file("junk.json"), file("junk.json"), "--json");
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("is not valid JSON");
@@ -158,7 +158,7 @@ describe("drift restore", () => {
     expect(restore.stderr).toContain("restored");
 
     drift("capture", "--db", DATABASE_URL, "--out", file("after.json"));
-    const result = drift("diff", file("target.json"), file("after.json"));
+    const result = drift("diff", file("target.json"), file("after.json"), "--json");
 
     expect(JSON.parse(result.stdout)).toEqual([]);
   });
