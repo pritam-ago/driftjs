@@ -47,10 +47,16 @@ jobs:
       - name: Pack, install the tarball, and run the bin
         run: |
           set -euo pipefail
-          npm pack --pack-destination "$RUNNER_TEMP"
+          # Both the tarball name and the install path follow the package name,
+          # so both are read from npm rather than written out here. A literal
+          # would have gone stale the moment the package took a scope:
+          # driftjs-0.1.0.tgz became driftcli-drift-0.1.0.tgz.
+          tarball="$(npm pack --pack-destination "$RUNNER_TEMP" --json \
+            | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename')"
+          name="$(node -pe 'require("./package.json").name')"
           cd "$RUNNER_TEMP"
           npm init -y > /dev/null
-          npm install ./driftjs-*.tgz
-          head -1 node_modules/driftjs/dist/cli.js | grep -q '^#!/usr/bin/env node'
-          test -x node_modules/driftjs/dist/cli.js
+          npm install "./$tarball"
+          head -1 "node_modules/$name/dist/cli.js" | grep -q '^#!/usr/bin/env node'
+          test -x "node_modules/$name/dist/cli.js"
           ./node_modules/.bin/drift --version
