@@ -30,18 +30,6 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/adapter-mongodb:
-    dependencies:
-      '@driftjs/core':
-        specifier: workspace:^
-        version: link:../core
-
-  packages/adapter-mysql:
-    dependencies:
-      '@driftjs/core':
-        specifier: workspace:^
-        version: link:../core
-
   packages/adapter-postgres:
     dependencies:
       '@driftjs/core':
@@ -66,12 +54,6 @@ importers:
       '@driftjs/core':
         specifier: workspace:^
         version: link:../core
-      '@driftjs/mongodb':
-        specifier: workspace:^
-        version: link:../adapter-mongodb
-      '@driftjs/mysql':
-        specifier: workspace:^
-        version: link:../adapter-mysql
       '@driftjs/postgres':
         specifier: workspace:^
         version: link:../adapter-postgres

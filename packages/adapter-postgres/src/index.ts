@@ -1,24 +1,5 @@
-import { DriftAdapter, DriftDelta } from "@driftjs/core";
 import { Client } from "pg";
-
-export function PostgresAdapter(connectionString: string): DriftAdapter {
-  async function* startCapture(): AsyncIterable<DriftDelta> {
-    console.log("📡 Starting Postgres capture:", connectionString);
-    // TODO: implement logical replication
-    yield {
-      id: "1",
-      source: connectionString,
-      timestamp: new Date().toISOString(),
-      table: "users",
-      op: "UPDATE",
-      key: { id: 123 },
-      before: { name: "Alice" },
-      after: { name: "Bob" }
-    };
-  }
-
-  return { startCapture };
-}
+import { Snapshot } from "@driftjs/core";
 
 function randomString(len = 8) {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -27,7 +8,7 @@ function randomString(len = 8) {
   return out;
 }
 
-export async function captureSnapshot(connectionString: string): Promise<Record<string, unknown>> {
+export async function captureSnapshot(connectionString: string): Promise<Snapshot> {
   const client = new Client({ connectionString });
   await client.connect();
 
