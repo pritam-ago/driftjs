@@ -1,24 +1,5 @@
-import { DriftAdapter, DriftDelta } from "@driftjs/core";
 import { Client } from "pg";
-
-export function PostgresAdapter(connectionString: string): DriftAdapter {
-  async function* startCapture(): AsyncIterable<DriftDelta> {
-    console.log("📡 Starting Postgres capture:", connectionString);
-    // TODO: implement logical replication
-    yield {
-      id: "1",
-      source: connectionString,
-      timestamp: new Date().toISOString(),
-      table: "users",
-      op: "UPDATE",
-      key: { id: 123 },
-      before: { name: "Alice" },
-      after: { name: "Bob" }
-    };
-  }
-
-  return { startCapture };
-}
+import { Snapshot } from "../types";
 
 function randomString(len = 8) {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -27,7 +8,46 @@ function randomString(len = 8) {
   return out;
 }
 
-export async function captureSnapshot(connectionString: string): Promise<Record<string, unknown>> {
+function pad(n: number, width = 2): string {
+  return String(n).padStart(width, "0");
+}
+
+function localDate(d: Date): string {
+  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function localTime(d: Date): string {
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+/**
+ * node-postgres parses `date` and `timestamp without time zone` into Date
+ * objects built from local calendar parts - postgres-date says so in as many
+ * words: "Force YYYY-MM-DD dates to be parsed as local time". Calling
+ * toISOString() on one of those shifts it by the machine's UTC offset, so
+ * `date '2025-01-01'` captured in UTC+05:30 lands in the snapshot as
+ * "2024-12-31T18:30:00.000Z". The stored value is wrong, and the same row
+ * captured in two timezones diffs as a change.
+ *
+ * Write those two types back out from their local parts, which is exactly what
+ * the database holds. `timestamp with time zone` is a real instant, so it keeps
+ * its UTC ISO form.
+ *
+ * Arrays are the known gap: information_schema reports them only as "ARRAY", so
+ * the element type is not available here and a date[] still goes out as UTC
+ * instants. Fixing it needs a different query, and this one is left alone.
+ */
+function normalizeValue(value: unknown, dataType: string | undefined): unknown {
+  if (Array.isArray(value)) {
+    return value.map((element) => normalizeValue(element, undefined));
+  }
+  if (!(value instanceof Date)) return value;
+  if (dataType === "date") return localDate(value);
+  if (dataType === "timestamp without time zone") return `${localDate(value)}T${localTime(value)}`;
+  return value.toISOString();
+}
+
+export async function captureSnapshot(connectionString: string): Promise<Snapshot> {
   const client = new Client({ connectionString });
   await client.connect();
 
@@ -67,9 +87,7 @@ export async function captureSnapshot(connectionString: string): Promise<Record<
       const rows = rowsResAll.rows.map((r: Record<string, any>) => {
         const out: Record<string, any> = {};
         for (const k of Object.keys(r)) {
-          const v = r[k];
-          if (v instanceof Date) out[k] = v.toISOString();
-          else out[k] = v;
+          out[k] = normalizeValue(r[k], columns[k]);
         }
         return out;
       });
