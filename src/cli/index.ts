@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { capture } from "./capture";
 import { diffCommand } from "./diff";
+import { restoreCommand } from "./restore";
 
 const program = new Command();
 
@@ -26,5 +27,13 @@ program
   .argument("<current>", "Current snapshot JSON file")
   .option("--out <file>", "Write JSON to this file instead of stdout")
   .action(diffCommand);
+
+program
+  .command("restore")
+  .description("Restore a snapshot file back into a Postgres database")
+  .argument("<snapshot>", "Snapshot JSON file to restore")
+  .requiredOption("--db <connection>", "Postgres connection string")
+  .option("--dry-run", "Print the SQL this would run and execute nothing")
+  .action(restoreCommand);
 
 program.parse(process.argv);
